@@ -1,0 +1,23 @@
+# Standard python ignores
+*.egg-info
+.coverage
+.ipynb_checkpoints
+**/__pycache__/
+.python-version
+*.pyc
+**/build
+
+# Ignore VS Code generated files
+*.vscode
+
+# Credentials (or files with potentially credentials inside)
+.env
+.env.yaml
+.credentials
+secrets.toml
+
+# nextflow/pipeline specifics
+work/
+.nextflow*
+results/
+*.h5ad
