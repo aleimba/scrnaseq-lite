@@ -89,11 +89,17 @@ between conditions.
   can be reused via `--simpleaf_index` on later runs.
 - R4.4 The index build must not re-run on `-resume`.
 - R4.5 `SIMPLEAF_INDEX` sets `scratch = true`, and the open-file limit is
-  raised to at least 2048 (`ulimit -n 2048`) in the container and, where
-  the executor allows, in `beforeScript`.
+  raised to at least 2048 (`ulimit -n 2048`) via `beforeScript` in
+  `conf/modules.config`.
   *Rationale: piscem opens very many intermediate files while indexing.
   Both nf-core and the simpleaf tutorial call this out. A low limit
   produces hangs and opaque errors rather than a clear message.*
+  *Note (settled at T1.3): the pipeline uses per-module biocontainers,
+  not one global image, so `SIMPLEAF_INDEX` and `SIMPLEAF_QUANT` execute
+  in the nf-core-maintained simpleaf biocontainer, never in the image
+  built at T1.4. `beforeScript` is therefore the only place this can be
+  set; baking the limit into our own image would have no effect on the
+  task that needs it.*
 - R4.6 The reference is the 10x Human GRCh38 2024-A package
   (`refdata-gex-GRCh38-2024-A.tar.gz`), supplying `fasta/genome.fa` and
   `genes/genes.gtf.gz`. simpleaf accepts the gzipped GTF directly.

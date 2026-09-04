@@ -36,14 +36,19 @@ Rules:
       Implements R2.2-R2.4, R12.3, R14.1. Verify that `outputDir` and
       `workflow.output.mode` are settable at top level as written.
       [Opus, High]
-- [ ] **T1.4 Container.** `docker/Dockerfile`. Implements R14.3, R12.2,
-      R4.5 and R5.7. micromamba base, multi-stage, non-root, every package
+- [ ] **T1.4 Container.** `docker/Dockerfile`. Implements R14.3, R12.2
+      and R5.7. micromamba base, multi-stage, non-root, every package
       pinned `version=build`. Set `ALEVIN_FRY_HOME` and run
-      `simpleaf set-paths`. Raise the open-file limit. Decide and document
-      whether the 10x barcode whitelist is pre-seeded into the image
-      (R5.6) or fetched at run time. Build it; record the compressed size
-      in `docs/container.md` (gitignored). Ask before pulling the base
-      image. [Opus, High]
+      `simpleaf set-paths`. Decide and document whether the 10x barcode
+      whitelist is pre-seeded into the image (R5.6) or fetched at run
+      time. Build it; record the compressed size in `docs/container.md`
+      (gitignored). Ask before pulling the base image. [Opus, High]
+      NOTE (T1.3): per-module biocontainers were chosen over one global
+      image, so `SIMPLEAF_INDEX`/`SIMPLEAF_QUANT` never run in this
+      image. R4.5's open-file limit no longer belongs here; it moved to
+      T2.2 as a `beforeScript`. This task keeps `ALEVIN_FRY_HOME` and
+      the whitelist only insofar as local (non-simpleaf) modules need
+      them; re-check that at T2.1/T2.4.
 - [ ] **T1.5 Data profiles.** `conf/test.config` and `conf/demo.config`.
       Implements R15.3. `test` uses remote nf-core test data;
       browse `https://github.com/nf-core/test-datasets` on the `scrnaseq`
@@ -67,7 +72,9 @@ Rules:
       "Design section 2: Module inventory"; all local modules must then
       match it. Never invent module names. [Opus, Medium]
 - [ ] **T2.2 Module args.** `conf/modules.config`: `ext.args`,
-      `ext.prefix`, `scratch = true` on `SIMPLEAF_INDEX` (R4.5), and the
+      `ext.prefix`, `scratch = true` AND `beforeScript = 'ulimit -n 2048 ...'`
+      on `SIMPLEAF_INDEX` (R4.5 — the `beforeScript` form, since simpleaf
+      runs in its own nf-core biocontainer, not the T1.4 image), and the
       chemistry mapping from "CLAUDE.md section 4.3: Chemistry mapping —
       one source of truth". fastp args must not touch R1; comment the
       reason inline. Implements R3.1-R3.4, R5.1-R5.4, R6.4. [Opus, High]
@@ -80,8 +87,10 @@ Rules:
       consumes the same paths (`<ref>/fasta/genome.fa`,
       `<ref>/genes/genes.gtf.gz`) and publishes an index referenced as
       `<dir>/index` (`.gitignore`'d). Confirm whether the installed simpleaf module sets
-      `ALEVIN_FRY_HOME` and raises the open-file limit (R4.5, R5.7); if
-      not, handle both in the container. [Opus, High]
+      `ALEVIN_FRY_HOME` (R5.7); if not, handle it via `beforeScript` in
+      `conf/modules.config`, matching the open-file limit already placed
+      there for R4.5 (see T2.2) — not in the T1.4 image, since simpleaf
+      runs in its own biocontainer. [Opus, High]
 - [ ] **T2.5 QCatch wiring.** The nf-core module is named `qcatch`.
       Inspect it with `nf-core modules info qcatch` before wiring, so the
       input/output channel shapes are taken from the module rather than
