@@ -29,7 +29,7 @@ CLAUDE.local.md
 .claude/settings.json
 .claude/settings.local.json
 .claude/reference/
-.claude/.cc-writes
+.claude/.cc-writes/
 
 # local session-only docs
 docs/environment.md
