@@ -21,8 +21,7 @@ Rules:
       space on the partition holding the Docker root directory and on the
       one holding this repo. Write `docs/environment.md` (gitignored).
       Do not touch `.claude/`. [Opus, Low]
-- [ ] **T0.2 Repo scaffold.** Directory tree, `.gitignore`, `CHANGELOG.md`
-      skeleton. Placeholder files only. [Opus, Low]
+- [ ] **T0.2 Repo scaffold.** Directory tree, skeleton. Placeholder files only. [Opus, Low]
 
 ## Wave 1 — Contracts (parallel)
 
