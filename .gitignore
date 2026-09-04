@@ -33,6 +33,7 @@ CLAUDE.local.md
 
 # local session-only docs
 docs/environment.md
+docs/progress.md
 docs/container.md
 docs/validation-report.md
 docs/nextflow-version-notes.md
