@@ -1,0 +1,52 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/aleimba/scrnaseq-lite/main/assets/schema_input.json",
+    "title": "scrnaseq-lite pipeline - params.input schema",
+    "description": "Schema for the samplesheet provided with params.input. One row per sample. Technical replicates must be merged before they reach this pipeline.",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "sample": {
+                "type": "string",
+                "pattern": "^\\S+$",
+                "description": "Sample identifier. Used as meta.id and therefore as the per-sample output directory name and file prefix throughout the pipeline.",
+                "errorMessage": "Sample name must be provided and cannot contain spaces",
+                "meta": ["id"]
+            },
+            "fastq_1": {
+                "type": "string",
+                "format": "file-path",
+                "exists": true,
+                "pattern": "^\\S+\\.f(ast)?q\\.gz$",
+                "description": "Gzipped FASTQ file for read 1, which carries the 10x cell barcode and UMI at fixed offsets. Nothing in this pipeline adapter-trims, quality-trims or length-filters it.",
+                "errorMessage": "FastQ file for reads 1 must be provided, must exist, cannot contain spaces and must have extension '.fq.gz' or '.fastq.gz'"
+            },
+            "fastq_2": {
+                "type": "string",
+                "format": "file-path",
+                "exists": true,
+                "pattern": "^\\S+\\.f(ast)?q\\.gz$",
+                "description": "Gzipped FASTQ file for read 2, the cDNA read. Required: droplet-based 10x libraries are always paired, so a single-end row cannot be quantified.",
+                "errorMessage": "FastQ file for reads 2 must be provided, must exist, cannot contain spaces and must have extension '.fq.gz' or '.fastq.gz'"
+            },
+            "chemistry": {
+                "type": "string",
+                "enum": ["10XV2", "10XV3", "10XV4"],
+                "description": "10x chemistry version. Single source of truth: this value is mapped to both the simpleaf chemistry and the QCatch chemistry by conf/modules.config, so the two cannot drift apart. It also fixes the expected read 1 length that SEQKIT_STATS asserts against: 26 bp for 10XV2, 28 bp for 10XV3 and 10XV4.",
+                "errorMessage": "Chemistry must be provided and be one of '10XV2', '10XV3' or '10XV4'",
+                "meta": ["chemistry"]
+            },
+            "expected_cells": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Optional. METADATA ONLY: it is never passed to simpleaf quant. simpleaf's permit-list modes (--expect-cells, --explicit-pl, --forced-cells, --knee, --unfiltered-pl) are mutually exclusive and this pipeline uses --unfiltered-pl, leaving cell calling to QCatch. This value is carried in meta for reporting and for sanity comparison against the number of cells QCatch actually calls.",
+                "errorMessage": "expected_cells must be a positive integer, or left empty",
+                "meta": ["expected_cells"]
+            }
+        },
+        "required": ["sample", "fastq_1", "fastq_2", "chemistry"]
+    },
+    "uniqueEntries": ["sample"],
+    "errorMessage": "Each sample name must be unique. Merge technical replicates of the same library before running this pipeline; it does not concatenate FASTQs."
+}
