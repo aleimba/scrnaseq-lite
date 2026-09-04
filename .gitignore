@@ -20,7 +20,7 @@ secrets.toml
 work/
 .nextflow*
 .nextflow.log*
-results/
+/results/
 *.nf.test.snap
 
 # Claude
@@ -29,13 +29,13 @@ CLAUDE.local.md
 .claude/settings.json
 .claude/settings.local.json
 .claude/reference/
+.claude/.cc-writes
 
 # local session-only docs
 docs/environment.md
 docs/container.md
 docs/validation-report.md
 docs/nextflow-version-notes.md
-.reference/
 
 # Environment-specific
 conf/aws.local.config
@@ -46,7 +46,8 @@ data/
 *.fastq.gz
 *.h5ad
 *.mtx
-reference/
+/reference/ # downloaded reference files
+/index/ # indexed reference
 
 # Quarto
 /.quarto/
