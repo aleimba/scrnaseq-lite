@@ -25,9 +25,10 @@ results/
 
 # Claude
 CLAUDE.md
-.claude/settings.json
 CLAUDE.local.md
+.claude/settings.json
 .claude/settings.local.json
+.claude/reference/
 
 # local session-only docs
 docs/environment.md
