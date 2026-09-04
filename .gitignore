@@ -19,5 +19,34 @@ secrets.toml
 # nextflow/pipeline specifics
 work/
 .nextflow*
+.nextflow.log*
 results/
+*.nf.test.snap
+
+# Claude
+CLAUDE.md
+.claude/settings.json
+CLAUDE.local.md
+.claude/settings.local.json
+
+# local session-only docs
+docs/environment.md
+docs/container.md
+docs/validation-report.md
+docs/nextflow-version-notes.md
+.reference/
+
+# Environment-specific
+conf/aws.local.config
+
+# Data
+data/
+*.fastq
+*.fastq.gz
 *.h5ad
+*.mtx
+reference/
+
+# Quarto
+/.quarto/
+*_files/
