@@ -48,6 +48,17 @@ between conditions.
 
 - R2.1 All run-variable parameters live in `params/default.yaml` as pure
   YAML with no embedded expressions.
+  *Extended at T1.2 and T1.5: `params/default.yaml` is NOT loaded
+  automatically, so every run must pass `-params-file <file>`. Each
+  profile has its OWN params file, and each is a COMPLETE parameter set
+  rather than a sparse overlay: `params/default.yaml`,
+  `params/demo.yaml`, `params/test.yaml`. Their key sets must stay
+  identical. Correspondingly, `conf/test.config` and `conf/demo.config`
+  carry ENGINE settings only and set no `params.*` at all.*
+  *Verified by running at T1.5: `-params-file` OUTRANKS params defined
+  in any config file, and an explicit `null` in the params file still
+  wins. Had a profile config set `params.input`, running it with a
+  different params file would have silently nulled the input.*
 - R2.2 `nextflow.config` holds only hard-coded settings, profiles,
   plugins, manifest and environment.
 - R2.3 Outputs go to `outputDir`, which is `results/<run>` when `--run` is
@@ -88,18 +99,28 @@ between conditions.
 - R4.3 When `--save_reference` is set, the built index is published so it
   can be reused via `--simpleaf_index` on later runs.
 - R4.4 The index build must not re-run on `-resume`.
-- R4.5 `SIMPLEAF_INDEX` sets `scratch = true`, and the open-file limit is
-  raised to at least 2048 (`ulimit -n 2048`) via `beforeScript` in
-  `conf/modules.config`.
+- R4.5 `SIMPLEAF_INDEX` sets `scratch = true` in `conf/modules.config`.
+  The open-file limit must be at least 2048 (`ulimit -n 2048`).
   *Rationale: piscem opens very many intermediate files while indexing.
   Both nf-core and the simpleaf tutorial call this out. A low limit
   produces hangs and opaque errors rather than a clear message.*
-  *Note (settled at T1.3): the pipeline uses per-module biocontainers,
-  not one global image, so `SIMPLEAF_INDEX` and `SIMPLEAF_QUANT` execute
-  in the nf-core-maintained simpleaf biocontainer, never in the image
-  built at T1.4. `beforeScript` is therefore the only place this can be
-  set; baking the limit into our own image would have no effect on the
-  task that needs it.*
+
+  *Settled at T1.5 by reading the module, superseding an earlier and
+  incorrect amendment that put the limit in `beforeScript`: the nf-core
+  `simpleaf/index` module ALREADY does all of this in its own script
+  block, and `simpleaf/quant` does the same minus the `ulimit`:*
+
+  ```bash
+  export ALEVIN_FRY_HOME=.
+  ulimit -n 2048
+  simpleaf set-paths
+  ```
+
+  *`ALEVIN_FRY_HOME=.` is the task working directory, so it behaves
+  identically on a laptop and on AWS Batch with an S3 work directory.
+  Nothing is therefore needed in the T1.4 image, in `beforeScript`, or in
+  the `env` scope — only `scratch = true`. T2.1 must confirm this against
+  the version actually installed before T2.2 relies on it.*
 - R4.6 The reference is the 10x Human GRCh38 2024-A package
   (`refdata-gex-GRCh38-2024-A.tar.gz`), supplying `fasta/genome.fa` and
   `genes/genes.gtf.gz`. simpleaf accepts the gzipped GTF directly.
@@ -120,6 +141,11 @@ between conditions.
 - R5.3a `--anndata-out` is passed, producing `af_quant/quants.h5ad`.
   QCatch accepts mtx input but only the h5ad path carries the doublet and
   mitochondrial metadata; mtx input silently loses it.
+  *Settled at T1.5: the nf-core `simpleaf/quant` module HARD-CODES
+  `--anndata-out` in its script block, so `conf/modules.config` must not
+  pass it again. `QCATCH` likewise hard-codes `--save_filtered_h5ad` and
+  `--export_summary_table`, leaving only `--skip_umap_tsne` for our
+  `ext.args` (R6.2). Confirm against the installed versions at T2.1.*
 - R5.4 The downstream count layer is selected by `--count_layer`
   (default `S+A`, the USA convention for single-cell; `S+A+U` for nuclei).
 - R5.4a simpleaf writes `X` as the SUM of U + S + A and stores each as a
@@ -133,9 +159,20 @@ between conditions.
   container image or pass the whitelist path explicitly, and document
   which was chosen. Untreated, this fails on offline nodes and in
   restricted AWS VPCs.
+  *Settled at T1.5: the nf-core `simpleaf/quant` module never relies on
+  the cache. Its `cellFilteringArgs` helper emits
+  `--unfiltered-pl ${cb_list}` from a staged whitelist channel, so the
+  whitelist is ALWAYS an explicit file. What remains is a sourcing
+  decision for T2.2: nf-core/scrnaseq vendors the whitelists in-repo at
+  `assets/whitelist/10x_V{1,2,3,4}_barcode_whitelist.txt.gz` (2.2 MB for
+  v2, 18.4 MB for v3, 13.4 MB for v4). Vendoring removes the network
+  dependency outright at the cost of roughly 20 MB in a public repo.*
 - R5.7 simpleaf requires `ALEVIN_FRY_HOME` to be set and
-  `simpleaf set-paths` to have been run. Confirm whether the installed
-  nf-core module handles this; if not, handle it in the container.
+  `simpleaf set-paths` to have been run.
+  *Settled at T1.5: the nf-core simpleaf modules do both in their own
+  script blocks, with `ALEVIN_FRY_HOME=.` (task-local, so identical on a
+  laptop and on AWS Batch). Nothing is needed in the container. See
+  R4.5. Confirm against the installed version at T2.1.*
 
 ### R6 — Cell calling
 
@@ -210,7 +247,19 @@ between conditions.
 - R12.1a Newer nf-core modules have begun migrating version reporting from
   a `versions.yml` output file to the topic-channel convention. Determine
   which convention the ACTUALLY INSTALLED modules use, and make local
-  modules match it. Do not mix the two conventions in one pipeline.
+  modules match it.
+
+  *Settled at T1.5 by reading the modules: the two conventions ARE mixed
+  in nf-core/scrnaseq 4.2.0, so "do not mix them" is not achievable for
+  the vendored half of this pipeline.*
+  - *`SIMPLEAF_INDEX` and `SIMPLEAF_QUANT` emit `path "versions.yml"`.*
+  - *`QCATCH` emits `tuple val("${task.process}"), val('qcatch'),
+    eval("qcatch --version ..."), emit: versions_qcatch, topic: versions`.*
+
+  *`COLLECT_VERSIONS` (T3.5) must therefore consume BOTH: the
+  `versions.yml` files and the `versions` topic. Our own local modules
+  still pick one convention and use it consistently; T2.1 decides which,
+  after checking what the installed modules actually do.*
 - R12.2 Every tool pinned to an exact version in the container.
 - R12.3 Nextflow `timeline`, `report`, `trace` and `dag` in
   `pipeline_info/`.
@@ -233,8 +282,18 @@ between conditions.
 
 - R14.1 Runs with `-profile docker` locally.
 - R14.2 Runs with `-profile awsbatch` on AWS Batch.
-- R14.3 One container image, `FROM` a minimal micromamba base, target
-  under 2 GB compressed.
+- R14.3 One PIPELINE-AUTHORED container image, `FROM` a minimal
+  micromamba base, target under 2 GB compressed.
+  *Amended at T1.5, recording the decision taken at T1.3: this pipeline
+  uses PER-MODULE BIOCONTAINERS. Each vendored nf-core module keeps the
+  container it pins, and no global `process.container` override is set.
+  Our image therefore covers the local modules only — the Scanpy steps,
+  Quarto, and the version and manifest scripts.*
+  *Rationale: overriding a vendored module's container would leave its
+  pinned biocontainer tag as dead text while silently making our image
+  responsible for every tool it needs. Cost accepted: several image
+  pulls rather than one, and no single digest to pin for R12.4;
+  `versions.tsv` (R12.1) is what records what actually ran.*
 - R14.4 `-profile demo` completes on 2 CPUs / 8 GB RAM in under 20 minutes
   using the bundled downsampled data and a pre-built index.
 
@@ -248,6 +307,23 @@ between conditions.
     reference used by nf-core/scrnaseq 4.2.0 `conf/test.config`. Exercises
     the full DAG in minutes with no local data management. Results are NOT
     biologically meaningful and must not be presented as such.
+
+    *Settled at T1.5. The data is mouse (GRCm38 chr19, gencode vM19) and
+    10XV2; verified from the FASTQ stream, R1 is 26 bp and R2 is 90 bp.
+    `assets/samplesheet_test.csv` is ours, because nf-core's own
+    samplesheet has no `chemistry` column and lists `Sample_Y` twice for
+    two lanes, which R1.4's uniqueness rule rejects by design.*
+
+    *KNOWN CEILING: nf-core sets `skip_qcatch = true` on this dataset
+    ("module does not work on small dataset") and its 4.2.0 simpleaf test
+    emits no QCATCH output at all — roughly 60,000 read pairs against
+    5,000 declared cells is about 12 reads per cell. This pipeline cannot
+    skip cell calling. So `-profile test -stub-run` is the always-green
+    check; `-profile test,docker` is expected green through
+    `SEQKIT_STATS`, `FASTP`, `SIMPLEAF_INDEX` and `SIMPLEAF_QUANT`; and
+    QCATCH onward is an open risk that T2.5 settles. `params/test.yaml`
+    lowers the QC and clustering values to give it the best chance, and
+    marks each as a fixture value.*
   - `demo` — local downsampled human PBMC data (R15.4). This is the run
     that produces presentable results.
 - R15.4 The demo dataset is 10x `pbmc_1k_v3` and `pbmc_10k_v3`. Same

@@ -36,26 +36,32 @@ Rules:
       Implements R2.2-R2.4, R12.3, R14.1. Verify that `outputDir` and
       `workflow.output.mode` are settable at top level as written.
       [Opus, High]
-- [ ] **T1.4 Container.** `docker/Dockerfile`. Implements R14.3, R12.2
-      and R5.7. micromamba base, multi-stage, non-root, every package
-      pinned `version=build`. Set `ALEVIN_FRY_HOME` and run
-      `simpleaf set-paths`. Decide and document whether the 10x barcode
-      whitelist is pre-seeded into the image (R5.6) or fetched at run
-      time. Build it; record the compressed size in `docs/container.md`
-      (gitignored). Ask before pulling the base image. [Opus, High]
-      NOTE (T1.3): per-module biocontainers were chosen over one global
-      image, so `SIMPLEAF_INDEX`/`SIMPLEAF_QUANT` never run in this
-      image. R4.5's open-file limit no longer belongs here; it moved to
-      T2.2 as a `beforeScript`. This task keeps `ALEVIN_FRY_HOME` and
-      the whitelist only insofar as local (non-simpleaf) modules need
-      them; re-check that at T2.1/T2.4.
-- [ ] **T1.5 Data profiles.** `conf/test.config` and `conf/demo.config`.
-      Implements R15.3. `test` uses remote nf-core test data;
-      browse `https://github.com/nf-core/test-datasets` on the `scrnaseq`
-      branch and nf-core/scrnaseq 4.2.0 `conf/test.config` for the real
-      paths and reference files. Do not construct URLs from memory.
-      `demo` uses the local downsampled PBMC data from T5.1. Register both
-      in the `profiles` block. [Opus, High]
+- [ ] **T1.4 Container.** `docker/Dockerfile`. Implements R14.3 and
+      R12.2. micromamba base, multi-stage, non-root, every package pinned
+      `version=build`. Build it; record the compressed size in
+      `docs/container.md` (gitignored). Ask before pulling the base
+      image. [Opus, High]
+      SCOPE NARROWED (T1.3, corrected T1.5): per-module biocontainers
+      were chosen over one global image, so `SIMPLEAF_INDEX`,
+      `SIMPLEAF_QUANT` and `QCATCH` never run in this image. This image
+      covers the LOCAL modules only: the four Scanpy steps, Quarto, and
+      the version and manifest scripts. Nothing simpleaf-related belongs
+      here — no `ALEVIN_FRY_HOME`, no `simpleaf set-paths`, no `ulimit`,
+      no whitelist. The nf-core simpleaf modules already do all of that
+      in their own script blocks; see R4.5, R5.6 and R5.7.
+- [ ] **T1.5 Data profiles.** `conf/test.config` and `conf/demo.config`,
+      plus `params/test.yaml`, `assets/samplesheet_test.csv` and
+      `assets/samplesheet_demo.csv`. Implements R15.3.
+      `conf/*.config` carry ENGINE settings only (`resourceLimits`); all
+      `params.*` live in the profile's own complete params file, because
+      `-params-file` outranks config-defined params (R2.1). Register both
+      profiles in the `profiles` block — note that a missing
+      `includeConfig` target is a hard parse error even in an INACTIVE
+      profile, so the block and the file must land together.
+      Real paths come from the `scrnaseq` branch of
+      `https://github.com/nf-core/test-datasets` and from nf-core/scrnaseq
+      4.2.0 `conf/test.config`. Do not construct URLs from memory.
+      `demo` uses the local downsampled PBMC data from T5.2. [Opus, High]
 
 ## Wave 2 — Upstream (parallel)
 
@@ -71,13 +77,33 @@ Rules:
       topic channels, and record the answer in `.claude/specs/02-design.md` under
       "Design section 2: Module inventory"; all local modules must then
       match it. Never invent module names. [Opus, Medium]
+      CARRIED FROM T1.5 — confirm these against the INSTALLED versions,
+      all read from nf-core/scrnaseq 4.2.0:
+      (a) `simpleaf/index` and `simpleaf/quant` already do
+          `export ALEVIN_FRY_HOME=.`, `ulimit -n 2048` (index only) and
+          `simpleaf set-paths` in-script, so T2.2 needs only
+          `scratch = true` (R4.5, R5.7).
+      (b) `simpleaf/quant` hard-codes `--anndata-out`; `qcatch` hard-codes
+          `--save_filtered_h5ad` and `--export_summary_table`. Do not
+          repeat them in `ext.args` (R5.3a).
+      (c) `simpleaf/quant` takes the whitelist as a staged channel input
+          and emits `--unfiltered-pl <file>`, so the R5.6 network
+          dependency is already avoided; what remains is where the
+          whitelist file comes from.
+      (d) THE TWO VERSION CONVENTIONS ARE MIXED: simpleaf modules emit
+          `versions.yml`, `qcatch` emits to the `versions` topic (R12.1a).
 - [ ] **T2.2 Module args.** `conf/modules.config`: `ext.args`,
-      `ext.prefix`, `scratch = true` AND `beforeScript = 'ulimit -n 2048 ...'`
-      on `SIMPLEAF_INDEX` (R4.5 — the `beforeScript` form, since simpleaf
-      runs in its own nf-core biocontainer, not the T1.4 image), and the
-      chemistry mapping from "CLAUDE.md section 4.3: Chemistry mapping —
-      one source of truth". fastp args must not touch R1; comment the
-      reason inline. Implements R3.1-R3.4, R5.1-R5.4, R6.4. [Opus, High]
+      `ext.prefix`, `scratch = true` on `SIMPLEAF_INDEX` (R4.5 — and ONLY
+      that; the module already sets `ALEVIN_FRY_HOME` and the open-file
+      limit itself, so no `beforeScript` is needed. This supersedes an
+      earlier, incorrect amendment of this task), and the chemistry
+      mapping from "CLAUDE.md section 4.3: Chemistry mapping — one source
+      of truth". Do not repeat flags the modules hard-code; see T2.1 note
+      (b). Decide where the 10x whitelist comes from; see T2.1 note (c)
+      and R5.6. Also add `includeConfig 'conf/modules.config'` to
+      `nextflow.config`, which T1.3 deliberately left out.
+      fastp args must not touch R1; comment the reason inline.
+      Implements R3.1-R3.4, R5.1-R5.4, R6.4. [Opus, High]
 - [ ] **T2.3 R1 assertion.** `modules/local/assert_r1_length/main.nf`.
       Implements R1.5. [Opus, Medium]
 - [ ] **T2.4 Reference subworkflow.**
@@ -86,16 +112,19 @@ Rules:
       GRCh38 2024-A package. Do not rewrite it; read it so the subworkflow
       consumes the same paths (`<ref>/fasta/genome.fa`,
       `<ref>/genes/genes.gtf.gz`) and publishes an index referenced as
-      `<dir>/index` (`.gitignore`'d). Confirm whether the installed simpleaf module sets
-      `ALEVIN_FRY_HOME` (R5.7); if not, handle it via `beforeScript` in
-      `conf/modules.config`, matching the open-file limit already placed
-      there for R4.5 (see T2.2) — not in the T1.4 image, since simpleaf
-      runs in its own biocontainer. [Opus, High]
+      `<dir>/index` (`.gitignore`'d). `ALEVIN_FRY_HOME` and the open-file
+      limit need no handling here: the module does both in-script
+      (R4.5, R5.7, and T2.1 note (a)). [Opus, High]
 - [ ] **T2.5 QCatch wiring.** The nf-core module is named `qcatch`.
       Inspect it with `nf-core modules info qcatch` before wiring, so the
       input/output channel shapes are taken from the module rather than
       assumed. Implements R6.1-R6.6. Do NOT pass `--remove_doublets` or
       `--visualize_doublets`. [Opus, High]
+      CARRIED FROM T1.5: this task settles the known ceiling on the
+      `test` profile — whether QCATCH can run at all on the small nf-core
+      fixture, which nf-core itself skips it on. See R15.3. If it cannot,
+      say so plainly and record what `-profile test,docker` does cover;
+      do not weaken the pipeline to make the test pass.
 
 ## Wave 3 — Scanpy (parallel)
 
@@ -113,6 +142,9 @@ Rules:
       DE or DGE. [Opus, Medium]
 - [ ] **T3.5 Versions.** `bin/collect_versions.py` and its module ->
       `versions.tsv`. Implements R12.1. [Opus, Medium]
+      CARRIED FROM T1.5: `COLLECT_VERSIONS` must consume BOTH conventions
+      — the `versions.yml` files emitted by the simpleaf modules and the
+      `versions` topic used by `qcatch`. See R12.1a.
 - [ ] **T3.6 Run manifest.** `bin/write_run_manifest.py` and its module ->
       `params_resolved.yaml` and `run_manifest.yaml`. Implements R2.5.
       [Opus, Medium]
