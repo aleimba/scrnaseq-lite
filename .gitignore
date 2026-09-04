@@ -46,8 +46,10 @@ data/
 *.fastq.gz
 *.h5ad
 *.mtx
-/reference/ # downloaded reference files
-/index/ # indexed reference
+# downloaded reference files
+/reference/
+# indexed reference
+/index/
 
 # Quarto
 /.quarto/
