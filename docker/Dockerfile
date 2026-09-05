@@ -44,6 +44,16 @@ USER root
 #                   scrublet requires `scikit-image`" at run time, not at
 #                   import, so nothing catches it until a real sample runs.
 #   leidenalg     - required by sc.tl.leiden(flavor='igraph')
+#   hdf5plugin    - supplies the HDF5 filter plugins, Blosc above all.
+#                   simpleaf writes quants.h5ad with the Blosc filter (id
+#                   32001) once the matrix is over a small size threshold,
+#                   and without this package h5py cannot read that file at
+#                   all: "Can't synchronously read data (can't open
+#                   directory ...)". It is needed by REPACK_H5AD, which
+#                   rewrites the matrix as gzip so QCatch's own container
+#                   can read it too. The threshold is why the gap went
+#                   unnoticed: a toy fixture is written uncompressed and
+#                   reads fine anywhere, while any real sample does not.
 #   quarto        - renders report/analysis_report.qmd
 #   ipykernel     - quarto's Python engine needs a kernel to execute the .qmd
 #   procps-ng     - supplies `ps`, without which Nextflow cannot collect
@@ -57,6 +67,7 @@ RUN micromamba create -y -p /opt/env \
         scipy=1.18.0=py314hf07bd8e_0 \
         pandas=3.0.5=py314hb4ffadd_1 \
         h5py=3.16.0=nompi_py314h77fd174_104 \
+        hdf5plugin=7.1.0=py314haeb3a3a_0 \
         scikit-learn=1.9.0=np2py314hf09ca88_0 \
         scikit-misc=0.5.2=py314hacf7208_1 \
         scikit-image=0.26.0=np2py314hda1ea4c_0 \
@@ -99,6 +110,14 @@ ENV PATH=/opt/env/bin:$PATH \
     LC_ALL=C.UTF-8
 
 ENTRYPOINT []
+
+# Where HDF5 looks for filter plugins. Setting this is what makes h5py able
+# to read simpleaf's Blosc-compressed quants.h5ad; the alternative,
+# `import hdf5plugin` before h5py, would only work in code we control, and
+# the variable also covers anything that opens the file indirectly.
+# Verified: with this set, plain h5py reads a real simpleaf h5ad; without
+# it, the same read fails with "can't open directory (.../hdf5/plugin)".
+ENV HDF5_PLUGIN_PATH=/opt/env/lib/python3.14/site-packages/hdf5plugin/plugins
 
 # nextflow.config runs this image with `-u $(id -u):$(id -g)`, so at run
 # time the process has the HOST uid, which matches no entry in /etc/passwd

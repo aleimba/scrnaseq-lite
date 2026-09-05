@@ -41,8 +41,51 @@ between conditions.
 - R1.4 Duplicate `sample` values fail the run. Technical replicates must
   be merged upstream; document this limitation.
 - R1.5 `SEQKIT_STATS` runs on every input FASTQ. The run fails if the
-  observed R1 modal length does not match the declared chemistry:
-  26 bp for `10XV2`; 28 bp for `10XV3` and `10XV4`.
+  observed R1 modal length is TOO SHORT for the declared chemistry:
+  at least 26 bp for `10XV2`; at least 28 bp for `10XV3` and `10XV4`.
+  *AMENDED at T2.3, on the user's instruction, from "does not match" to
+  "is too short". The check now applies **exactly the leniency simpleaf
+  itself applies**, per chemistry, instead of a stricter rule of its own.
+  The registered geometries end in `x:` — `1{b[16]u[10]x:}` for `10xv2`,
+  `1{b[16]u[12]x:}` for `10xv3` and `10xv4-3p` — which reads as "barcode,
+  UMI, then discard whatever remains". A longer R1 is therefore fully
+  usable, and a v2 library sequenced with a 28-cycle R1 is a real and
+  valid case that the previous strict-equality rule would have rejected.
+  Only an R1 too short to contain the barcode and UMI is an error, and
+  that error is still hard: it means the chemistry is wrong, the mates are
+  swapped, or R1 was trimmed. An R1 longer than required passes with a
+  note on stderr saying the surplus is discarded by simpleaf's geometry.
+  This is not a weakened check — the cases it exists to catch all make R1
+  too SHORT or mis-declared, never too long.*
+  *IMPLEMENTED at T2.3 as `modules/local/assert_r1_length/main.nf`, which
+  calls `bin/assert_r1_length.py`. Every path exercised by running it.
+  Three decisions worth knowing:*
+  1. ***"Modal" is read as the MEDIAN**, `seqkit stats --all`'s `Q2`
+     column. seqkit has no mode column at all; for 10x R1 the median IS
+     the mode, because the read is a fixed-length barcode + UMI by
+     construction. The median rather than `max_len` matters on ragged
+     input: a file of 1,000 reads that is 90% 26 bp with a few 24 and
+     27 bp reads has `max_len` 27, which a max-based check would fail,
+     and median 26, which correctly passes. Verified on exactly that
+     file. Non-uniform files still pass, and record
+     `uniform_length = no` in the output TSV plus a stderr note.*
+  2. *The expected length lives in `params.chemistry_map[...].r1_len`
+     alongside the simpleaf and QCatch chemistries — 26 for `10XV2`,
+     28 for `10XV3` and `10XV4` — so it cannot drift from the chemistry
+     it is derived from. The module itself reads no params.*
+  3. *The R1 FILENAME is passed in, not inferred. `SEQKIT_STATS` reports
+     one row per file keyed by staged filename, and choosing the R1 row by
+     row order or by a `_R1_` pattern would be a guess. A name that
+     matches no row fails with "This is a pipeline wiring error, not a
+     data problem" and lists the names it did see.*
+
+  *The five cases, all run: 26 bp R1 declared `10XV2` -> pass; 28 bp R1
+  declared `10XV2` -> pass, with the surplus-bases note (this is the case
+  the earlier strict rule failed wrongly); 26 bp R1 declared `10XV3` ->
+  hard fail, "R1 is TOO SHORT"; 24 bp R1 declared `10XV2` -> hard fail;
+  ragged 24-26 bp declared `10XV2` -> pass on the median, recorded as
+  `uniform_length = no`.*
+
   *VERIFIED at T2.1 against `simpleaf chemistry lookup` in the pinned
   container, which is also a CORRECTION. The registered geometries are
   `10xv2` -> `1{b[16]u[10]x:}2{r:}` and `10xv3` / `10xv4-3p` ->
@@ -218,6 +261,9 @@ between conditions.
   contents are `quants.h5ad`, `quants_mat.mtx`, `quants_mat_rows.txt` and
   `quants_mat_cols.txt`. T3.1's reader and T4.2's publishing rule must use
   the corrected path.*
+  *The h5ad route survives, but only via `REPACK_H5AD`: QCatch cannot read
+  the file simpleaf writes (R6.4b), so what reaches QCatch is the
+  gzip-compressed copy. `--anndata-out` stays exactly as it is.*
   *Also written by simpleaf, one level up: `af_quant/gene_id_to_name.tsv`.
   That is exactly the mapping R6.4a says QCatch otherwise fetches over the
   network, and `QCATCH` receives this whole directory. T2.5 should check
@@ -250,6 +296,11 @@ between conditions.
   `['ambiguous', 'spliced', 'unspliced', None]`. The spurious `None` is
   real and must be filtered before iterating (T3.1).*
 - R5.5 Quantifier output is named `*_raw_matrix.h5ad`.
+  *SATISFIED at T2.6 by `REPACK_H5AD`, which writes
+  `<sample>_raw_matrix.h5ad`. simpleaf itself emits
+  `af_quant/alevin/quants.h5ad` inside a directory, and the repack step has
+  to write a new file anyway (R6.4b), so it applies the provenance suffix
+  at the same time. T4.2 therefore renames only the CELL-CALLED matrix.*
 - R5.6 `--unfiltered-pl` with no explicit path makes simpleaf resolve and
   cache the chemistry's barcode whitelist under `ALEVIN_FRY_HOME` at run
   time. This is a network dependency. Either pre-seed the cache in the
@@ -363,17 +414,86 @@ between conditions.
   decides whether to derive the TSV (`gene_id`, `gene_name`, no header)
   from the GTF the index was built from.*
 
-  *NARROWED at T2.2, and it may already be solved. simpleaf writes
-  `gene_id_to_name.tsv` itself, into BOTH the index directory
-  (`<idx>/index/` and `<idx>/ref/`) and the quant output
-  (`af_quant/gene_id_to_name.tsv`), and `QCATCH` is handed that whole
-  `af_quant` directory. The h5ad's `var` also already carries
-  `gene_symbol`. T2.5 must check whether QCatch finds the file on its own
-  before building anything. If it does not, note the constraint: the
-  option CANNOT be supplied through `ext.args`, because the module has no
-  input for it and an unstaged path is not visible inside the container.
-  It would need the file staged some other way, or the limitation
-  documented.*
+  *CLOSED AT T2.3, from QCatch 0.2.12's own source plus offline runs of the
+  pinned container against real simpleaf output. The behaviour depends
+  entirely on WHICH input QCatch is given, and the help text understates
+  the failure:*
+  - ***h5ad input: no network call at all.**
+    `utils.py:133 add_geneid_2_name_if_absent` returns immediately when
+    `"gene_symbol" in var.columns`, and simpleaf's `--anndata-out` h5ad
+    already carries `gene_symbol` (R5.4a). The registry is never consulted.*
+  - ***mtx input: ALWAYS a network call, and offline it CRASHES.** With no
+    `gene_symbol` column, `input_processing.py:242` calls
+    `get_name_mapping_file_from_registry`, which fetches
+    `https://raw.githubusercontent.com/COMBINE-lab/QCatch-resources/.../registries/id2name.json`.
+    Run with the network disabled, that raises an unhandled
+    `requests.exceptions.ConnectionError` and QCatch exits 1. It does NOT
+    "omit the mitochondrial plots and carry on", which is what
+    `qcatch --help` implies. On an offline node or in a locked-down VPC
+    this kills the run.*
+  - ***The fix, verified offline: pass `--gene_id2name_file`.** simpleaf
+    writes exactly the file QCatch wants, `gene_id_to_name.tsv`
+    (`gene_id`, `gene_name`, no header), into the quant output directory —
+    the same directory `QCATCH` is handed — and also into `<idx>/index/`
+    and `<idx>/ref/`. With `--gene_id2name_file <quant_dir>/gene_id_to_name.tsv`
+    the same offline run gets past the gene-name step with no network
+    access whatsoever.*
+
+  *So the option CAN be supplied through `ext.args` after all, contrary to
+  the T2.2 note this replaces: the file lives INSIDE the staged input
+  directory, so a path relative to it is visible in the container. The
+  cost is that the staged directory's name is then load-bearing; T2.5
+  should stage it under a fixed name rather than relying on the default.*
+- R6.4b **simpleaf 0.30.0 writes h5ad with the Blosc HDF5 filter, which no
+  vendored container can read. RESOLVED at T2.6 by `REPACK_H5AD`.**
+  *The problem, established at T2.3 and confirmed by the user independently
+  on real data: simpleaf's anndata writer uses Blosc (HDF5 filter id 32001)
+  once the matrix is over a small size threshold. No QCatch image ships that
+  filter -- not 0.2.12, not 0.2.13 -- so QCatch fails while PARSING ITS
+  ARGUMENTS, exit 2, before any analysis:*
+
+  ```
+  qcatch: error: argument --input/-i: invalid get_input value: <file>
+  -> Can't synchronously read data (can't open directory (/usr/local/lib/hdf5/plugin).
+  ```
+
+  *Plain `h5py` in the same container fails identically, so this is the
+  image's HDF5 filter set, not QCatch's code. The real
+  `reference/pbmc1k_quant` matrix (25,713 x 38,606) uses
+  `{'32001': 20, 'gzip': 5}`.*
+  ***IT IS SIZE-DEPENDENT, which is how it stayed hidden.** A 3-barcode toy
+  file carries NO filters and reads anywhere; a 200-barcode one does not.
+  A test that passes on a small fixture proves nothing here.*
+  *The QCatch tutorial does not demonstrate a fix: its `quants.h5ad` was
+  written by an older simpleaf in May 2025 and is gzip-compressed, so it
+  never meets the problem.*
+
+  ***THE RESOLUTION, chosen by the user at T2.6 and verified end to end on
+  the real pbmc1k file:** the T1.4 image gains `hdf5plugin` plus
+  `HDF5_PLUGIN_PATH` (R14.3), and a local module, `REPACK_H5AD`, rewrites
+  the quantifier's h5ad with gzip -- the one filter built into every HDF5
+  build -- before anything else touches it. QCatch then keeps its stock
+  container, unmodified.*
+  - *Cost, measured on 25,713 x 38,606: **2.5 s**, 23 MB -> 28.6 MB.*
+  - *Stock `quay.io/biocontainers/qcatch:0.2.13--pyhdfd78af_0` then runs to
+    completion with `--network none` on the module's own output and calls
+    **1,176 cells** from 25,705 barcodes, writing `QCatch_report.html`,
+    `summary_table.csv` and `filtered_quants.h5ad`.*
+  - *The same repacked file serves the `--cell_calling threshold` path, so
+    R7.8 is closed by the same step.*
+
+  *REJECTED, with the reason recorded: building our own QCatch image
+  (biocontainers qcatch + `hdf5plugin`). It would be a SECOND
+  pipeline-authored image, which R14.3 does not allow, and our own image
+  would still need `hdf5plugin` for R7.8 -- two image changes rather than
+  one, for no gain at run time.*
+  *Also established, and worth keeping: **`HDF5_PLUGIN_PATH` alone is
+  sufficient**. Copying the plugins into HDF5's compiled-in default
+  directory is not needed, and neither is `import hdf5plugin` in code we
+  control.*
+  *Unaffected either way: QCatch WRITES its outputs with
+  `compression="gzip"` (`input_processing.py:479`), so
+  `*_filtered_quants.h5ad` is readable everywhere.*
 - R6.5 The QCatch HTML report is published per sample.
 - R6.6 QCatch's cell-called matrix is named `*_filtered_matrix.h5ad`.
   *AMENDED at T2.1: the vendored module does not produce that name. It
@@ -439,6 +559,14 @@ between conditions.
   `--remove_doublets` is true. Removal happens before HVG and PCA.
 - R7.7 The run fails with a readable message if a sample retains fewer
   than `--min_cells_per_sample` cells.
+- R7.8 The Scanpy steps never read a Blosc-compressed h5ad, on either path.
+  *Under `--cell_calling qcatch` they read QCatch's output, which QCatch
+  writes with plain gzip. Under `--cell_calling threshold` (R6.7) they read
+  the quantifier matrix directly -- and that is `REPACK_H5AD`'s gzip output,
+  not simpleaf's Blosc original. RESOLVED at T2.6 by the same step that
+  resolved R6.4b, which is why both were settled together.*
+  *The T1.4 image also gained `hdf5plugin`, so it could read the Blosc file
+  directly if it ever had to; nothing relies on that.*
 
 ### R8 — Normalisation and feature selection
 
@@ -521,8 +649,9 @@ between conditions.
     other five evals are clean.*
 - R12.2 Every tool pinned to an exact version in the container.
   *Partly met at T1.4, and the shortfall is deliberate. `docker/Dockerfile`
-  pins the 21 packages it NAMES to exact `version=build` triples, all taken
-  from a `micromamba create --dry-run --json` solve. It does NOT pin the
+  pins the packages it NAMES — 21 at T1.4, 22 since T2.6 added
+  `hdf5plugin=7.1.0=py314haeb3a3a_0` — to exact `version=build` triples, all
+  taken from a `micromamba create --dry-run --json` solve. It does NOT pin the
   full 243-package closure, so `numba`, `llvmlite` and `libopenblas` —
   all of which affect numerical output — float on rebuild. A given built
   image is reproducible by digest; a rebuild from source months later is
@@ -584,6 +713,22 @@ between conditions.
   *The AWS target is AMAZON ECR. That URI embeds the AWS account ID, so it
   must never appear in a tracked file (N4); it belongs in the gitignored
   `conf/aws.local.config` as a container override.*
+  *CLOSED at T2.6. The image had `blosc` and `c-blosc2` but NOT the HDF5
+  Blosc FILTER, so it could not read a real simpleaf `quants.h5ad`. It now
+  installs `hdf5plugin=7.1.0=py314haeb3a3a_0` and sets*
+  `ENV HDF5_PLUGIN_PATH=/opt/env/lib/python3.14/site-packages/hdf5plugin/plugins`.
+  *The pin came from a `micromamba create --dry-run --json` solve against
+  the existing `python=3.14.7` and `h5py=3.16.0` pins and moved nothing
+  else. Verified in the rebuilt image: the plugin directory exists,
+  `libh5blosc.so` is present, and `REPACK_H5AD` reads a real Blosc file
+  with no ephemeral install.*
+  *The TAG STAYS `scrnaseq-lite:0.1.0`, deliberately and on the user's
+  instruction: the pipeline is still in initial development, and the local
+  image is deleted and rebuilt rather than versioned. This is a choice, not
+  an oversight. It also means **the image must be rebuilt** before any run
+  after this change, or `REPACK_H5AD` fails on the missing filter.*
+  *One authored image is still the rule. Building our own QCatch image was
+  considered at T2.6 and rejected for that reason; see R6.4b.*
   *Two run-time constraints the image MUST keep satisfying, both verified:
   (a) `docker.runOptions = '-u $(id -u):$(id -g)'` gives an arbitrary host
   uid with no `/etc/passwd` entry and no writable home, so `HOME`,

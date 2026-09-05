@@ -16,6 +16,9 @@ samplesheet.csv
    |                                                       |
    v                                                       |
 SIMPLEAF_QUANT  <-- index (SIMPLEAF_INDEX | --simpleaf_index)
+   | af_quant/alevin/quants.h5ad  (Blosc-compressed)       |
+   v                                                       |
+REPACK_H5AD  (Blosc -> gzip; nothing else can read it)     |
    | *_raw_matrix.h5ad  (no cell calling; rows are the     |
    |  whitelist barcodes seen >= --min-reads times)        |
    |                                                       |
@@ -49,10 +52,11 @@ SCANPY_MARKER_GENES --> markers.tsv + dotplot              |
 | Process                    | Source                            | Notes                                   |
 | -------------------------- | --------------------------------- | --------------------------------------- |
 | `SEQKIT_STATS`             | nf-core                           | `-a -T`                                 |
-| `ASSERT_R1_LENGTH`         | local                             | fails on chemistry mismatch             |
+| `ASSERT_R1_LENGTH`         | local                             | fails on chemistry mismatch; median R1 length vs `chemistry_map.r1_len` |
 | `FASTP`                    | nf-core                           | report-only; reads not consumed         |
 | `SIMPLEAF_INDEX`           | nf-core                           | conditional; `scratch = true`           |
 | `SIMPLEAF_QUANT`           | nf-core                           | piscem backend, unfiltered matrix       |
+| `REPACK_H5AD`              | local                             | Blosc -> gzip; `bin/repack_h5ad_blosc_to_gzip.py` |
 | `QCATCH`                   | nf-core                           | cell calling + QC HTML                  |
 | `SCANPY_CELL_QC`           | local                             | `bin/scanpy_cell_qc.py`                 |
 | `SCANPY_DETECT_DOUBLETS`   | local                             | `bin/scanpy_detect_doublets.py`         |
@@ -82,7 +86,7 @@ All six are Seqera Wave community images. None is a
 per-module containers, this is why the pipeline sets no global
 `process.container` and why the T1.4 image covers local modules only.
 
-**ONE OVERRIDE, in `conf/containers.config`.** `SIMPLEAF_INDEX` and
+**TWO OVERRIDES, in `conf/containers.config`.** First, `SIMPLEAF_INDEX` and
 `SIMPLEAF_QUANT` run in
 `quay.io/biocontainers/simpleaf:0.30.0--hd612981_0` (simpleaf 0.30.0,
 alevin-fry 0.18.1, piscem 0.23.0) rather than the module's own image. The
@@ -97,6 +101,21 @@ the fix. The override is deliberately in its own file, not in
 0.18.1 or newer. See R4.5 for the evidence and T2.1 finding 6a for the
 verification. Note that `versions.tsv` will report the versions that
 actually ran — 0.30.0 / 0.18.1 / 0.23.0 — not the ones the module pins.
+
+Second, `QCATCH` runs in `quay.io/biocontainers/qcatch:0.2.13--pyhdfd78af_0`
+rather than the module's Wave image for 0.2.12. That one is a straight
+version upgrade — current release, measurably faster — not a workaround. It
+does NOT address the Blosc problem: 0.2.13 fails on a Blosc-compressed h5ad
+exactly as 0.2.12 does. `REPACK_H5AD` is what addresses that (R6.4b).
+
+**Local modules call a `bin/` script from a BASH script block, always**
+(settled at T2.3). No script is embedded in a `.nf` file, as a heredoc or
+otherwise: `bin/` is on `PATH` for every task, and a real file can be
+linted, run by hand and diffed. Bash specifically is also required, because
+the `versions` topic is fed by an `eval` output and Nextflow permits `eval`
+only on bash scripts — a `#!/usr/bin/env python` script block fails at
+runtime. A second consequence: `-stub-run` still starts the container,
+because the eval is evaluated there, so a stub run is not image-free.
 
 **VERSION-REPORTING CONVENTION — settled at T2.1: the `versions` topic,
 everywhere.** All six modules emit
@@ -296,6 +315,15 @@ running it. Full detail in `docs/container.md`.*
 
 *Measured: 2.66 GB uncompressed, 628 MB gzip-compressed, against the
 R14.3 budget of 2 GB compressed.*
+
+*Amended at T2.6: the image also installs `hdf5plugin` and sets
+`HDF5_PLUGIN_PATH`. Without the Blosc HDF5 filter it supplies, `h5py` here
+cannot read the `quants.h5ad` simpleaf writes for any real sample, which
+`REPACK_H5AD` has to do (R6.4b). `blosc` and `c-blosc2` were already in the
+closure and are NOT the same thing: those are the compression libraries,
+while the filter plugin is what teaches HDF5 to use them. The tag stays
+`scrnaseq-lite:0.1.0` during initial development, so the image must be
+rebuilt after this change rather than pulled by a new tag.*
 
 ## 9. Error handling
 

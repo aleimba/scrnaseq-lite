@@ -623,8 +623,49 @@ the gitignored `docs/environment.md` and `docs/container.md`.
           does NOT catch it. Right now every selector warns, because no
           process exists yet. T4.2 must confirm the warnings are GONE:
           that message is how a mistyped process name shows up.
-- [ ] **T2.3 R1 assertion.** `modules/local/assert_r1_length/main.nf`.
+- [x] **T2.3 R1 assertion.** `modules/local/assert_r1_length/main.nf`.
       Implements R1.5. [Opus, Medium]
+      DELIVERED: `ASSERT_R1_LENGTH` calling `bin/assert_r1_length.py`,
+      plus an `r1_len` column added to `params.chemistry_map` in
+      `conf/modules.config` (26 / 28 / 28), so the required length shares
+      the chemistry's single source of truth and the module reads no params
+      itself. Lint clean.
+      Input shape: `[ meta, path(seqkit_stats_tsv), val(r1_filename),
+      val(expected_r1_length) ]`. Output: `[ meta, path(tsv) ]`, one row —
+      sample, chemistry, required, observed, min, max, num_reads,
+      uniform_length, result — plus `python` to the versions topic.
+      THE CHECK IS "AT LEAST", not "equal to" (R1.5 as amended): it applies
+      simpleaf's own per-chemistry leniency, because the registered
+      geometries end in `x:` and discard whatever follows the barcode and
+      UMI. Too short is a hard failure; longer passes with a note.
+      VERIFIED by running all five cases against real
+      `seqkit stats --all` TSVs, in the T1.4 image:
+      26 bp/`10XV2` pass; **28 bp/`10XV2` pass** — the case the earlier
+      strict rule failed wrongly; 26 bp/`10XV3` fail, "R1 is TOO SHORT";
+      24 bp/`10XV2` fail; ragged 24-26 bp/`10XV2` pass on the median with
+      `uniform_length = no`. Plus the wiring-error path and `-stub-run`.
+      CARRIED FROM T2.3:
+      1. **NO script may be embedded in a `.nf` file** — no heredoc, no
+         python shebang. Scripts are executable files in `bin/`, called
+         from a bash script block; `bin/` is on `PATH` for every task. Now
+         a standing rule in "CLAUDE.md section 3.2".
+      2. **An `eval` output REQUIRES a bash script block.** A
+         `#!/usr/bin/env python` script block fails at runtime with
+         "Process output of type 'eval' is only allowed with Bash process
+         scripts". Since every module reports versions through the topic,
+         which is an eval, no local module may use a non-bash shebang.
+      3. **`-stub-run` STILL EXECUTES THE CONTAINER** for eval outputs. The
+         stub run reported `python 3.14.7`, the image's python, not the
+         host's 3.14.4. A stub run is not image-free.
+      4. A `bin/` script is only on `PATH` when the REPO is the Nextflow
+         project directory. A throwaway probe workflow placed elsewhere
+         fails with exit 127; put the probe at the repo root instead, as
+         T1.3 and T1.5 did, and delete it afterwards.
+      5. `seqkit stats --all` emits `Q1`, `Q2`, `Q3` LENGTH quartiles; `Q2`
+         is the median and is what "modal length" is implemented as. There
+         is no mode column. Full header:
+         `file format type num_seqs sum_len min_len avg_len max_len Q1 Q2
+         Q3 sum_gap N50 N50_num Q20(%) Q30(%) AvgQual GC(%) sum_n`.
 - [ ] **T2.4 Reference subworkflow.**
       `subworkflows/local/prepare_splici_reference.nf`. Implements R4.
       `bin/download_reference.sh` ALREADY EXISTS and fetches the 10x
@@ -708,15 +749,128 @@ the gitignored `docs/environment.md` and `docs/container.md`.
         only when `params.qcatch_n_partitions` is set. For a custom assay
         the chemistry VALUE passed to the module must then be null, which
         makes the module omit `--chemistry` entirely.
-      - R6.4a may already be closed for free: simpleaf writes
-        `af_quant/gene_id_to_name.tsv` into the very directory QCATCH
-        receives, and the h5ad's `var` carries `gene_symbol`. Check whether
-        QCatch picks it up before building anything; if it does not, the
-        option cannot be passed via `ext.args` (no module input, unstaged
-        path invisible in the container) and the limitation gets documented.
       - The raw matrix is at `af_quant/alevin/quants.h5ad` (T2.2 finding 5).
+      CARRIED FROM T2.3 — two QCatch findings that change what this task
+      builds. Both come from running the pinned containers against real
+      simpleaf output; see R6.4a and R6.4b.
+      - **R6.4a is CLOSED, and the repack keeps it closed.** The repacked
+        file is still an h5ad carrying `var['gene_symbol']`, so the
+        no-network branch is the one taken; `--gene_id2name_file` is not
+        needed on this path. Confirmed at T2.6 by running stock qcatch on
+        the repacked real file with `--network none`.
+        The detail, in case the input ever changes: with h5ad input QCatch
+        makes NO network call
+        (it returns early when `var` has `gene_symbol`, which simpleaf's
+        h5ad does). With MTX input it always calls the registry and,
+        offline, dies with an unhandled `ConnectionError`, exit 1 — not
+        the graceful degradation `qcatch --help` describes. Passing
+        `--gene_id2name_file <staged_dir>/gene_id_to_name.tsv` fixes it,
+        and simpleaf writes that file into the very directory QCATCH is
+        handed. This is possible from `ext.args` because the path is
+        INSIDE the staged input, which makes the staged directory's name
+        load-bearing: stage it under a fixed name.
+      - **R6.4b is RESOLVED at T2.6, so this task only WIRES it.**
+        simpleaf's h5ad is Blosc-compressed and no QCatch image can read
+        it; `REPACK_H5AD` rewrites it as gzip first. So the chain here is
+        `SIMPLEAF_QUANT -> REPACK_H5AD -> QCATCH`, and QCATCH's
+        `path(quant_dir)` input receives the repacked FILE, not the
+        `af_quant` directory. Verified at T2.6 on the real pbmc1k data:
+        stock qcatch 0.2.13 reads it with `--network none` and calls 1,176
+        cells from 25,705 barcodes.
+        Passing the DIRECTORY instead would put QCatch back on simpleaf's
+        Blosc file, which it prefers over the mtx when both are present.
+      - The QCATCH container is already overridden to
+        `quay.io/biocontainers/qcatch:0.2.13--pyhdfd78af_0` in
+        `conf/containers.config` — current release, and faster. It does
+        not change any of the above.
+      - A too-small matrix fails inside cell calling with
+        `AssertionError: Invalid selection of 0-count barcodes!`
+        (`cell_calling.py:298`). That is what item (iii) above will hit if
+        the fixture is too sparse, and it is a crash, not a graceful skip
+        — another reason the `threshold` escape hatch exists.
+
+- [x] **T2.6 h5ad repack.** `bin/repack_h5ad_blosc_to_gzip.py` and
+      `modules/local/repack_h5ad/main.nf`, plus `hdf5plugin` in
+      `docker/Dockerfile`. Resolves R6.4b and R7.8. Not in the original
+      plan: it exists because simpleaf 0.30.0 writes h5ad with the Blosc
+      HDF5 filter and nothing downstream can read it. [Opus, High]
+      DELIVERED: `REPACK_H5AD` rewrites `af_quant/alevin/quants.h5ad` as
+      gzip — the one filter built into every HDF5 build — and names the
+      result `<sample>_raw_matrix.h5ad`, which also satisfies R5.5.
+      `docker/Dockerfile` gained `hdf5plugin=7.1.0=py314haeb3a3a_0` and
+      `ENV HDF5_PLUGIN_PATH=/opt/env/lib/python3.14/site-packages/hdf5plugin/plugins`.
+      Lint clean at 21 files.
+      ROUTE CHOSEN BY THE USER over the alternative of building our own
+      QCatch image: that would be a SECOND pipeline-authored image, which
+      R14.3 does not allow, and our image needed `hdf5plugin` anyway for
+      R7.8 — two image changes instead of one, for no run-time gain.
+      IMAGE TAG STAYS `scrnaseq-lite:0.1.0`, on the user's instruction:
+      still initial development, so the local image is deleted and rebuilt
+      rather than versioned. **Any run after this change needs that
+      rebuild.**
+      VERIFIED end to end on REAL data — the user's
+      `reference/pbmc1k_quant` matrix, 25,713 x 38,606, filters
+      `{'32001': 20, 'gzip': 5}`:
+      - the script repacked it in **2.5 s**, 23 MB -> 28.6 MB, verifying
+        that every dataset name, shape and dtype survived and that the sums
+        of `X` and all three layers were unchanged;
+      - the MODULE ran it in the rebuilt image with no ephemeral install,
+        real and `-stub-run`, reporting `python 3.14.7` and `h5py 3.16.0`
+        to the versions topic;
+      - stock `quay.io/biocontainers/qcatch:0.2.13--pyhdfd78af_0` then
+        processed the module's own output with `--network none`, exit 0,
+        writing `QCatch_report.html`, `summary_table.csv` and
+        `filtered_quants.h5ad`, and calling **1,176 cells from 25,705
+        barcodes** — the right order of magnitude for pbmc1k.
+      CARRIED FROM T2.6:
+      1. **`HDF5_PLUGIN_PATH` alone is enough.** Copying plugins into
+         HDF5's compiled-in default directory is NOT needed, and neither is
+         `import hdf5plugin` in code we control. Verified both ways against
+         a real Blosc file.
+      2. The repack is an h5py-level copy, deliberately NOT an AnnData
+         round-trip: it preserves `uns`, dtypes and attributes exactly,
+         needs no AnnData semantics, and sidesteps the spurious `None`
+         layer key of T1.4. It copies large datasets in slices, so peak
+         memory does not scale with a sample's non-zero count.
+      3. It VERIFIES itself and fails loudly: dataset set, shapes and
+         dtypes must match, the sums of `X` and every layer must match, and
+         no non-gzip filter may survive into the output. This file feeds
+         every downstream step, so a silent truncation here would surface
+         as biology rather than as an error.
+      4. `blosc` and `c-blosc2` were already in the image and are NOT the
+         same thing as the filter plugin: those are the compression
+         libraries, `hdf5plugin` is what teaches HDF5 to use them.
+      5. Gzip level 4 was chosen as a size/time compromise; the file grows
+         about 22% against Blosc. That is the price of being readable
+         everywhere.
 
 ## Wave 3 — Scanpy (parallel)
+
+**CARRIED FROM T2.3 — no embedded scripts.** Every python script is an
+executable file in `bin/`, called from a bash script block. No heredocs,
+no `#!/usr/bin/env python` script blocks. `bin/assert_r1_length.py` with
+`modules/local/assert_r1_length/main.nf` is the worked example, and the
+rule is in "CLAUDE.md section 3.2".
+
+**SETTLED AT T2.6, was carried from T2.3 — the Blosc problem no longer
+reaches this wave.** `REPACK_H5AD` rewrites simpleaf's Blosc h5ad as gzip
+before anything else sees it, so BOTH paths into `SCANPY_CELL_QC` — QCatch's
+output under `--cell_calling qcatch`, the repacked raw matrix under
+`threshold` — are plain gzip. Read `<sample>_raw_matrix.h5ad` on the
+threshold path, never `af_quant/alevin/quants.h5ad` directly. The T1.4 image
+now carries `hdf5plugin` as well, so reading the Blosc original would work,
+but nothing should rely on that.
+
+**CARRIED FROM T2.3, applies to every module in this wave.** A process
+that reports its version through the `versions` topic uses an `eval`
+output, and Nextflow allows `eval` outputs ONLY on bash script blocks:
+a `#!/usr/bin/env python` script block dies with "Process output of type
+'eval' is only allowed with Bash process scripts". Every local module here
+therefore keeps a bash script block that CALLS its `bin/*.py` script —
+which is the layout these tasks already specify — and never switches to a
+python shebang. `modules/local/assert_r1_length/main.nf` is the worked
+example. Note also that `-stub-run` still runs the container, because the
+eval is evaluated there.
 
 - [ ] **T3.1 Cell QC.** `bin/scanpy_cell_qc.py` and its module.
       Implements R7.1-R7.4. Verify the QCatch h5ad layout empirically
@@ -803,6 +957,18 @@ the gitignored `docs/environment.md` and `docs/container.md`.
         `t2g_3col.tsv` from `SIMPLEAF_INDEX` as `txp2gene`, and
         `params.umi_resolution` as the `val resolution` input. None of
         those are `ext.args`.
+      CARRIED FROM T2.3 — wiring `ASSERT_R1_LENGTH` in `READ_QC`. It takes
+      `[ meta, path(seqkit_stats_tsv), val(r1_filename),
+      val(expected_r1_length) ]`:
+      - `r1_filename` must be the STAGED name of the R1 file as
+        `SEQKIT_STATS` saw it — `reads[0].name`, not a path. The module
+        matches the stats row on that exact string and fails loudly if it
+        finds no match, so a mis-wire is caught rather than silently
+        skipped.
+      - `expected_r1_length` is `params.chemistry_map[meta.chemistry].r1_len`.
+      - `SEQKIT_STATS` runs once per sample over BOTH mates, so its TSV has
+        an R1 row and an R2 row; the module needs the R2 row to exist and
+        ignores it.
 - [ ] **T4.2 Entry workflow.** `workflows/scrnaseq_lite.nf` and `main.nf`
       with `publish:` and `output` blocks. Implements R13 and follows
       "Design section 5: Publishing" and "Design section 6: main.nf
@@ -898,6 +1064,11 @@ the gitignored `docs/environment.md` and `docs/container.md`.
 - [ ] **T5.3 Green run.** Full `-stub-run`, then `-profile test,docker`,
       then the real `-profile demo,docker` two-sample run. Fix to green.
       [Opus, High]
+      CARRIED FROM T2.3: `-stub-run` is NOT image-free. Eval outputs are
+      evaluated in the container even when the script body is stubbed, so
+      the first stub run pulls every image and needs `scrnaseq-lite:0.1.0`
+      to exist. Budget for that instead of treating the stub pass as a
+      no-dependency smoke test.
       CARRIED FROM T2.1 — the SIGILL blocker is FIXED, but check the fix is
       still in place before blaming anything else. `conf/containers.config`
       overrides the two simpleaf processes onto
