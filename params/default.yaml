@@ -1,0 +1,120 @@
+# scrnaseq-lite - default run-variable parameters.
+#
+# Pure YAML. No Groovy, no expressions, no interpolation.
+# This file is NOT loaded automatically. Every run must pass it:
+#
+#   nextflow run . -profile test,docker -params-file params/default.yaml
+#
+# A params file is always a COMPLETE parameter set, never a sparse
+# overlay, so it is a self-describing record of one run's parameters.
+# params/demo.yaml is a full copy of this file with the demo values
+# filled in; keep the two key sets identical.
+#
+# `run` is deliberately absent. The run name is a per-launch value set
+# only on the command line with `--run <name>`; its timestamped default
+# lives in nextflow.config. Putting a run name in a params file would
+# make every run sharing that file write into one output directory.
+
+# --- Input ----------------------------------------------------------------
+input: null                    # samplesheet CSV; validated against assets/schema_input.json
+
+# --- Reference ------------------------------------------------------------
+# Fetch the 10x GRCh38 2024-A package with bin/download_reference.sh, then
+# either build the splici index once with --build_index --save_reference, or
+# point --simpleaf_index at an already-built index directory.
+build_index: false
+simpleaf_index: null           # path to an existing index; referenced as <dir>/index/
+save_reference: false          # publish the built index so later runs can reuse it
+fasta: null                    # genome FASTA; with `gtf` this selects the splici strategy
+gtf: null                      # gene annotation; simpleaf accepts it gzipped
+r2_read_length: 91             # cDNA read length; sets the splici intron flank size.
+                               # Verified: pbmc_1k_v3 and pbmc_10k_v3 are both
+                               # 28 bp R1 / 91 bp R2, so one index serves both.
+
+# --- Quantification -------------------------------------------------------
+# fastp arguments are NOT here. They are ext.args in conf/modules.config,
+# which is the single home for per-process arguments.
+mapper_backend: "piscem"       # passed as --use-piscem at INDEX time; quant inherits it,
+                               # so no mapper flag is passed twice
+umi_resolution: "cr-like"      # simpleaf --resolution (required); cr-like | cr-like-em
+permit_list_mode: "unfiltered-pl"  # QCatch calls cells, so quant stays unfiltered.
+                                   # Mutually exclusive with --expect-cells, --knee,
+                                   # --forced-cells and --explicit-pl.
+count_layer: "S+A"             # spliced+ambiguous, the USA convention for whole cells;
+                               # use S+A+U for single-nucleus.
+                               # NOTE: simpleaf writes X as U+S+A and keeps U, S and A as
+                               # separate named layers. Reconstruct this from the named
+                               # layers; reading X and assuming it matches is a silent
+                               # correctness bug.
+
+# --- Cell calling ---------------------------------------------------------
+# How cells are separated from empty droplets. Two methods:
+#
+#   qcatch     QCatch's two-step EmptyDrops-style ambient model. The only
+#              scientifically acceptable choice for real data.
+#   threshold  NO ambient model. The unfiltered quantifier matrix goes
+#              straight to the Scanpy QC step, where min_genes and
+#              min_cells_per_gene below act as a crude cut.
+#
+# `threshold` exists for ONE reason: a fixture too small to give an ambient
+# model anything to work with, so the DAG can still be exercised end to end.
+# It is NOT a "faster" or "simpler" setting. A global cut discards real
+# low-count cells — PBMCs carry only ~1 pg RNA — so results produced with
+# it are not publishable and must never be presented as cell-called.
+# Only `qcatch` produces *_filtered_matrix.h5ad.
+cell_calling: "qcatch"
+
+# QCatch chemistry is derived from the samplesheet `chemistry` column via the
+# mapping in conf/modules.config, so it cannot drift from the simpleaf
+# chemistry. Set the value below only for custom assays with no mapping.
+qcatch_n_partitions: null      # partition count for QCatch's empty-drops step
+
+# --- Cell QC --------------------------------------------------------------
+min_genes: 200                 # conventional floor separating cells from debris
+min_cells_per_gene: 3          # a gene seen in <3 cells carries no usable signal
+mito_mad: 5                    # MAD-based outlier cut, not an arbitrary percentage
+mito_max_pct: 20               # hard ceiling; healthy PBMCs rarely exceed this
+count_mad: 5                   # MAD cut on log1p total counts
+min_cells_per_sample: 100      # fail the run, readably, if a sample yields fewer cells
+
+# Gene patterns for the QC percentages (R7.1). Kept as parameters so the
+# scripts hold no hard-coded constants and a non-human reference can be used.
+# QCatch also writes pct_counts_mt, but we recompute it so the pattern is ours.
+mito_gene_prefix: "MT-"        # human mitochondrial gene symbols
+ribo_gene_pattern: "^RP[SL]"   # cytoplasmic ribosomal protein genes
+hb_gene_pattern: "^HB[ABDEGQZ][0-9]?$"  # haemoglobin genes, excluding HBP pseudogenes
+
+# --- Doublets (explicit Scanpy step, seeded; NOT QCatch's) ----------------
+# QCatch's own Scrublet run exposes no seed, so doublets are detected here
+# instead, where the seed and parameters are visible in the DAG.
+remove_doublets: true          # drop predicted doublets before HVG and PCA
+expected_doublet_rate: 0.08    # ~8% at ~10k loaded cells on the 10x v3 loading curve.
+                               # A single global prior: it suits a 10k-cell capture, and
+                               # a ~1k-cell capture sits nearer 0.8%. Scrublet's call is
+                               # driven mainly by the simulated-doublet score histogram,
+                               # so the prior shifts the threshold rather than setting it.
+
+# --- Normalisation and features ------------------------------------------
+target_sum: null               # null => median library size (Scanpy default)
+n_hvg: 2000                    # Scanpy/Seurat convention
+hvg_flavor: "seurat_v3"        # operates on RAW counts, not log data; best for few samples
+
+# --- Dimensionality reduction and clustering -----------------------------
+n_pcs: 50                      # comfortably above the elbow for PBMCs
+n_neighbors: 15                # Scanpy default; robust for 1k-10k cells
+leiden_resolution: 1.0         # yields roughly 8-12 clusters on PBMCs
+umap_min_dist: 0.5             # Scanpy default
+
+# --- Marker genes ---------------------------------------------------------
+# Cluster-vs-rest marker detection. This is NOT differential expression
+# between conditions, and must never be described as DE or DGE.
+marker_method: "wilcoxon"      # rank-based and robust to the count distribution
+n_markers_plot: 5              # top N genes per cluster in the dotplot
+
+# --- Reproducibility ------------------------------------------------------
+seed: 42                       # reaches scrublet, PCA, UMAP and Leiden; all four
+
+# --- Reporting ------------------------------------------------------------
+multiqc_title: "scrnaseq-lite QC report"
+skip_multiqc: false
+skip_analysis_report: false

@@ -33,13 +33,12 @@ CLAUDE.local.md
 
 # local session-only docs
 docs/environment.md
-docs/progress.md
 docs/container.md
 docs/validation-report.md
 docs/nextflow-version-notes.md
 
 # Environment-specific
-conf/aws.local.config
+# conf/aws.local.config
 
 # Data
 data/

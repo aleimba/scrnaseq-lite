@@ -1,0 +1,93 @@
+# scrnaseq-lite - parameters for the `demo` profile.
+#
+# A COMPLETE parameter set, not an overlay. Keep its key set identical to
+# params/default.yaml; only the values marked DEMO below differ.
+#
+#   nextflow run . -profile demo,docker -params-file params/demo.yaml --run demo01
+#
+# The `demo` profile supplies engine settings only (resource caps); every
+# params.* value for the run comes from this file. As in default.yaml,
+# `run` is absent: pass --run <name> on the command line.
+#
+# Data: 10x Genomics pbmc_1k_v3 and pbmc_10k_v3, both downsampled to
+# ~1,200 cells and ~24M read pairs by bin/download_and_downsample_testdata.sh.
+# The scientific defaults below were chosen for PBMCs, so only the input,
+# the index and the report title need to change.
+
+# --- Input ----------------------------------------------------------------
+input: "assets/samplesheet_demo.csv"   # DEMO: the two downsampled PBMC samples
+
+# --- Reference ------------------------------------------------------------
+# DEMO: reuse a splici index built once beforehand, so the run fits R14.4's
+# 20-minute budget on 2 CPUs / 8 GB. Build it once with:
+#   nextflow run . -profile docker -params-file params/default.yaml \
+#       --build_index --save_reference --fasta ... --gtf ... --run index_build
+build_index: false
+simpleaf_index: "index/GRCh38-2024-A_splici"   # DEMO: referenced as <dir>/index/
+save_reference: false
+fasta: null
+gtf: null
+r2_read_length: 91             # both PBMC samples are 28 bp R1 / 91 bp R2
+
+# --- Quantification -------------------------------------------------------
+mapper_backend: "piscem"
+umi_resolution: "cr-like"
+permit_list_mode: "unfiltered-pl"
+count_layer: "S+A"             # whole cells, not nuclei
+
+# --- Cell calling ---------------------------------------------------------
+# Real PBMC data, so the ambient model is the only acceptable choice. The
+# `threshold` alternative is a fixture-only escape hatch; see
+# params/default.yaml for why it must not be used here.
+cell_calling: "qcatch"
+qcatch_n_partitions: null      # both samples are 10XV3, which has a chemistry mapping
+
+# --- Cell QC --------------------------------------------------------------
+min_genes: 200
+min_cells_per_gene: 3
+mito_mad: 5
+mito_max_pct: 20
+count_mad: 5
+min_cells_per_sample: 100      # each sample is downsampled to ~1,200 cells
+
+mito_gene_prefix: "MT-"
+ribo_gene_pattern: "^RP[SL]"
+hb_gene_pattern: "^HB[ABDEGQZ][0-9]?$"
+
+# --- Doublets -------------------------------------------------------------
+remove_doublets: true
+expected_doublet_rate: 0.08    # KNOWN LIMITATION: one global prior for both samples.
+                               # Barcode subsetting preserves the original loading
+                               # densities, so pbmc_10k_v3 really does carry ~8%
+                               # doublets while pbmc_1k_v3 carries ~0.8%. This prior
+                               # fits the former and over-states the latter. Scrublet
+                               # thresholds mainly on the simulated-doublet score
+                               # histogram, so the effect is a shifted threshold rather
+                               # than a fixed 8% cut, but the analysis report must not
+                               # present the per-sample doublet rates as independent
+                               # estimates. A per-sample prior would need a samplesheet
+                               # column, which R1.2 does not define.
+
+# --- Normalisation and features ------------------------------------------
+target_sum: null
+n_hvg: 2000
+hvg_flavor: "seurat_v3"
+
+# --- Dimensionality reduction and clustering -----------------------------
+n_pcs: 50
+n_neighbors: 15
+leiden_resolution: 1.0
+umap_min_dist: 0.5
+
+# --- Marker genes ---------------------------------------------------------
+# Cluster-vs-rest marker detection, not differential expression.
+marker_method: "wilcoxon"
+n_markers_plot: 5
+
+# --- Reproducibility ------------------------------------------------------
+seed: 42
+
+# --- Reporting ------------------------------------------------------------
+multiqc_title: "scrnaseq-lite demo (10x PBMC) QC report"   # DEMO
+skip_multiqc: false
+skip_analysis_report: false

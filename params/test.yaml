@@ -1,0 +1,130 @@
+# scrnaseq-lite - parameters for the `test` profile.
+#
+#   nextflow run . -profile test,docker -params-file params/test.yaml
+#
+# A COMPLETE parameter set, not an overlay. Keep its key set identical to
+# params/default.yaml. The `test` profile supplies engine settings only
+# (resource caps); every params.* value comes from this file. As in the
+# other params files, `run` is absent: pass --run <name> on the command
+# line.
+#
+# PURPOSE: plumbing, not biology. This exercises the DAG on the small
+# remote nf-core/test-datasets fixture in minutes, with no local data to
+# manage. Its clustering output is MEANINGLESS and must never be shown or
+# presented as a result. The presentable run is `demo`.
+#
+# The data is 10x 3' v2, mouse, and tiny: two samples of roughly 60,000
+# read pairs each against 5,000 declared cells, mapped to chromosome 19
+# of GRCm38 only. Verified directly from the FASTQ stream: R1 is 26 bp
+# (matching 10XV2) and R2 is 90 bp.
+#
+# KNOWN CEILING: nf-core/scrnaseq 4.2.0 sets `skip_qcatch = true` on this
+# same dataset with the comment "module does not work on small dataset",
+# and its 4.2.0 simpleaf pipeline test produces no QCATCH output at all.
+# At roughly 12 reads per declared cell there is nothing for an ambient
+# model to work with. This pipeline cannot skip cell calling, so:
+#   - `-profile test -stub-run` is the always-green check;
+#   - `-profile test,docker` is expected green through SEQKIT_STATS,
+#     FASTP, SIMPLEAF_INDEX and SIMPLEAF_QUANT;
+#   - QCATCH onward is a known open risk, settled at task T2.5.
+# The QC and clustering values below are lowered to give the run its best
+# chance. They are FIXTURE values for a toy dataset, not scientific
+# recommendations; params/default.yaml holds the real defaults.
+
+# --- Input ----------------------------------------------------------------
+# TEST: assets/samplesheet_test.csv, not nf-core's own samplesheet. Theirs
+# has no `chemistry` column, which this pipeline requires, and lists
+# Sample_Y on two rows for two lanes, which the `uniqueEntries` rule in
+# assets/schema_input.json rejects by design (R1.4: merge technical
+# replicates upstream). Only the L001 lane of Sample_Y is used here.
+input: "assets/samplesheet_test.csv"
+
+# --- Reference ------------------------------------------------------------
+# TEST: build the splici index from mouse chromosome 19. It is small
+# enough to index in seconds, which is the point of this profile.
+# Paths read from nf-core/scrnaseq 4.2.0 conf/test.config, not constructed.
+build_index: true
+simpleaf_index: null
+save_reference: false
+fasta: "https://github.com/nf-core/test-datasets/raw/scrnaseq/reference/GRCm38.p6.genome.chr19.fa"
+gtf: "https://github.com/nf-core/test-datasets/raw/scrnaseq/reference/gencode.vM19.annotation.chr19.gtf"
+r2_read_length: 90             # TEST: verified from the FASTQ; 90 bp here, not the 91 bp of the PBMC data
+
+# --- Quantification -------------------------------------------------------
+mapper_backend: "piscem"
+umi_resolution: "cr-like"
+permit_list_mode: "unfiltered-pl"
+count_layer: "S+A"
+
+# --- Cell calling ---------------------------------------------------------
+# TEST fixture value (default "qcatch"). This is the one parameter here that
+# changes the SCIENCE rather than a threshold, so it gets the long comment.
+#
+# The fixture is roughly 60,000 read pairs against 5,000 declared cells —
+# about 12 reads per cell. There is no ambient distribution to model, and
+# nf-core/scrnaseq sets `skip_qcatch = true` on this exact dataset with the
+# comment "module does not work on small dataset". `threshold` sends the
+# unfiltered quantifier matrix straight to the Scanpy QC step, where the
+# lowered min_genes below acts as a crude cut, so the DAG runs end to end.
+#
+# This is NOT cell calling and the output must never be described as
+# cell-called. It is acceptable here only because this profile's results are
+# already declared meaningless; see the PURPOSE note at the top of this file.
+# params/demo.yaml is the run that produces real numbers, and it uses qcatch.
+#
+# NOT YET PROVEN to rescue this profile: `--unfiltered-pl` applies
+# alevin-fry's --min-reads cut (default 10) before a barcode reaches the
+# matrix, so on a fixture this small the unfiltered matrix may itself hold
+# too few barcodes. T2.5 must count them before relying on this.
+cell_calling: "threshold"      # TEST fixture value (default "qcatch")
+
+# Unused while cell_calling is "threshold" — QCatch does not run. Kept at
+# null so the key set matches the other params files, and correct if this
+# profile is ever switched back: 10XV2 has a chemistry mapping, so QCatch
+# would receive --chemistry 10X_3p_v2 and derive its own partition range.
+qcatch_n_partitions: null
+
+# --- Cell QC --------------------------------------------------------------
+# TEST: all four lowered. Chromosome 19 of GRCm38 carries roughly 1,500
+# genes and this fixture yields a handful of barcodes, so the production
+# floors would empty the matrix before clustering ever ran.
+min_genes: 10                  # TEST fixture value (default 200)
+min_cells_per_gene: 1          # TEST fixture value (default 3)
+mito_mad: 5
+mito_max_pct: 100              # TEST fixture value (default 20): do not filter on a toy matrix
+count_mad: 5
+min_cells_per_sample: 1        # TEST fixture value (default 100)
+
+# TEST: the reference is MOUSE (GRCm38, gencode vM19), so the human
+# patterns in params/default.yaml would match nothing and every QC
+# percentage would silently read zero.
+mito_gene_prefix: "mt-"        # mouse mitochondrial gene symbols are lower-case
+ribo_gene_pattern: "^Rp[sl]"   # mouse ribosomal protein genes
+hb_gene_pattern: "^Hb[abq]"    # mouse haemoglobin genes
+
+# --- Doublets -------------------------------------------------------------
+remove_doublets: true
+expected_doublet_rate: 0.08
+
+# --- Normalisation and features ------------------------------------------
+target_sum: null
+n_hvg: 200                     # TEST fixture value (default 2000): one chromosome has far fewer genes
+hvg_flavor: "seurat_v3"
+
+# --- Dimensionality reduction and clustering -----------------------------
+n_pcs: 10                      # TEST fixture value (default 50): must stay below the cell and gene count
+n_neighbors: 5                 # TEST fixture value (default 15)
+leiden_resolution: 1.0
+umap_min_dist: 0.5
+
+# --- Marker genes ---------------------------------------------------------
+marker_method: "wilcoxon"
+n_markers_plot: 5
+
+# --- Reproducibility ------------------------------------------------------
+seed: 42
+
+# --- Reporting ------------------------------------------------------------
+multiqc_title: "scrnaseq-lite test (nf-core test data, NOT biologically meaningful)"   # TEST
+skip_multiqc: false
+skip_analysis_report: false
