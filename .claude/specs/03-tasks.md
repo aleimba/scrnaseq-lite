@@ -275,7 +275,7 @@ the gitignored `docs/environment.md` and `docs/container.md`.
 
 ## Wave 2 — Upstream (parallel)
 
-- [ ] **T2.1 Vendored modules.** `nf-core modules install` for fastp,
+- [~] **T2.1 Vendored modules.** `nf-core modules install` for fastp,
       seqkit/stats, multiqc, simpleaf/index, simpleaf/quant and qcatch.
       Run `simpleaf chemistry lookup` (or the module's equivalent) inside
       the pinned container to confirm the registered chemistry strings

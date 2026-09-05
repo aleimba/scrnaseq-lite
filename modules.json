@@ -1,0 +1,14 @@
+{
+  "name": "scrnaseq-lite",
+  "homePage": "https://github.com/aleimba/scrnaseq-lite",
+  "repos": {
+    "https://github.com/nf-core/modules.git": {
+      "modules": {
+        "nf-core": {}
+      },
+      "subworkflows": {
+        "nf-core": {}
+      }
+    }
+  }
+}
