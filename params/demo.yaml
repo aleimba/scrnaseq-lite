@@ -35,7 +35,11 @@ umi_resolution: "cr-like"
 permit_list_mode: "unfiltered-pl"
 count_layer: "S+A"             # whole cells, not nuclei
 
-# --- Cell calling (QCatch) ------------------------------------------------
+# --- Cell calling ---------------------------------------------------------
+# Real PBMC data, so the ambient model is the only acceptable choice. The
+# `threshold` alternative is a fixture-only escape hatch; see
+# params/default.yaml for why it must not be used here.
+cell_calling: "qcatch"
 qcatch_n_partitions: null      # both samples are 10XV3, which has a chemistry mapping
 
 # --- Cell QC --------------------------------------------------------------

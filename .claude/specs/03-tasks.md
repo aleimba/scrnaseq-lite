@@ -1,5 +1,9 @@
 # Tasks — scrnaseq-lite
 
+Single source of truth for task status and for every finding that changes
+what a later task must do. Marks: `[ ]` not started, `[~]` in progress,
+`[x]` done.
+
 Rules:
 
 - One task at a time. Mark `[~]` in progress, `[x]` done. Never batch.
@@ -10,46 +14,222 @@ Rules:
   resolved now.
 - After every task: `nextflow run . -profile test -stub-run`, and once
   `conf/test.config` exists also `nextflow run . -profile test,docker`.
-  Paste the real output.
+  Paste the real output. NOTE: neither is possible before T4.2, which
+  creates `main.nf` — until then `nextflow run .` has no entry point.
+  `nextflow lint . -exclude .claude` is the check that does work.
 - The effort column maps to the Claude Code CLI effort/thinking selector
   (Low / Medium / High / Extra High / Max).
 
+**Recording findings.** A finding that changes a later task goes in the
+task entry below, marked `CARRIED FROM <task>` or `SETTLED AT <task>`, and
+in the requirement it invalidates in `.claude/specs/01-requirements.md`.
+This file is tracked and public, so it must contain NO machine-specific
+detail — no local paths, disk figures, or host state (N4). Those belong in
+the gitignored `docs/environment.md` and `docs/container.md`.
+
 ## Wave 0 — Foundations (sequential)
 
-- [ ] **T0.1 Environment probe.** Confirm Nextflow 26.04.6, docker,
+- [x] **T0.1 Environment probe.** Confirm Nextflow 26.04.6, docker,
       nf-core tools, and the active pyenv `scrnaseq-lite`. Report free
       space on the partition holding the Docker root directory and on the
       one holding this repo. Write `docs/environment.md` (gitignored).
       Do not touch `.claude/`. [Opus, Low]
-- [ ] **T0.2 Repo scaffold.** Directory tree, skeleton. Placeholder files only. [Opus, Low]
+- [x] **T0.2 Repo scaffold.** Directory tree, skeleton. Placeholder files
+      only. [Opus, Low]
+      Delivered: dir tree, `.gitkeep` placeholders, `.gitignore`,
+      `CHANGELOG.md` skeleton (date filled in at T5.6).
+      FINDING: the lint command for this repo is
+      `nextflow lint . -exclude .claude`. `-exclude` takes a bare
+      directory path; the glob forms `.claude/*` and `**/.claude/**` are
+      silently NOT honoured.
 
 ## Wave 1 — Contracts (parallel)
 
-- [ ] **T1.1 Schemas1.** `assets/schema_input.json`.
+- [x] **T1.1 Schemas1.** `assets/schema_input.json`.
       Implements R1.1. Add one valid and one invalid example
       samplesheet. [Opus, High]
-- [ ] **T1.2 Params.** `params/default.yaml` and `params/demo.yaml`.
+      Delivered `assets/schema_input.json` plus
+      `assets/samplesheet_example_{valid,invalid}.csv`. Verified with
+      nf-schema 2.8.0 via a throwaway `samplesheetToList` probe (removed).
+      CARRIED FROM T1.1:
+      1. A BLANK optional integer column validates fine against
+         `"type": "integer"` and arrives in meta as `[]` — not `null` and
+         not absent. Downstream code must treat `meta.expected_cells == []`
+         as "not provided" (in Groovy `[]` is falsy).
+      2. `uniqueEntries` works at the TOP level of the schema with a
+         sibling top-level `errorMessage`. Wrapping it in `allOf`, as the
+         nf-schema docs example does, also works but adds a spurious
+         "Value does not match against the schemas at indexes [0]" line to
+         the error output.
+- [x] **T1.2 Params.** `params/default.yaml` and `params/demo.yaml`.
       Implements R2.1 and N3. Pure YAML, one justification comment per
       scientific default, values from "Design section 7: Scientific
       defaults and their justification". [Opus, Medium]
-- [ ] **T1.3 Core config.** `nextflow.config` and `conf/base.config`.
+      36 keys each, identical key sets, differing in exactly 3 values
+      (`input`, `simpleaf_index`, `multiqc_title`). T1.5 added
+      `params/test.yaml` as a third; parity is now three-way. Re-run this
+      whenever a param is added in a later wave:
+      `python -c "import yaml; ks=[set(yaml.safe_load(open(f))) for f in ('params/default.yaml','params/demo.yaml','params/test.yaml')]; assert ks[0]==ks[1]==ks[2], ks[0]^ks[1]|ks[0]^ks[2]"`
+      CARRIED FROM T1.2:
+      1. Params from a `-params-file` keep their YAML types (null stays
+         null, 1.0 is a Double, 42 an Integer). Params from the CLI arrive
+         as **String**: `--leiden_resolution 0.4` binds as `"0.4"`. Safe
+         when the value is interpolated into a shell command and cast by
+         argparse, but any Groovy arithmetic on a param must cast first.
+      2. `--run demo01` overrides correctly and no `run` key leaks from
+         either YAML.
+      Deviations from the original reference draft, all resolving a
+      conflict with CLAUDE.md in favour of CLAUDE.md: dropped `run`
+      (`nextflow.config` plus CLI only), dropped `fastp_args` (belongs in
+      `conf/modules.config` `ext.args`), added `mito_gene_prefix` /
+      `ribo_gene_pattern` / `hb_gene_pattern` so the T3.1 QC script holds
+      no hard-coded gene patterns.
+- [x] **T1.3 Core config.** `nextflow.config` and `conf/base.config`.
       Implements R2.2-R2.4, R12.3, R14.1. Verify that `outputDir` and
       `workflow.output.mode` are settable at top level as written.
       [Opus, High]
-- [ ] **T1.4 Container.** `docker/Dockerfile`. Implements R14.3 and
+      Also delivered `conf/aws.config`. Verified by running: `nextflow
+      config` for the `docker` and `awsbatch` profiles, plus a throwaway
+      root `main.nf` stub probe (removed) run bare, with `--run probe01`,
+      and with `--run probe01 -resume`. Lint clean on all three files.
+      CARRIED FROM T1.3 — Nextflow 26 config-parser behaviour. These are
+      not style preferences; each one is a hard parse error:
+      1. `def` is rejected outright at config top level: "Variable
+         declarations cannot be mixed with config statements". Even a
+         config containing nothing but a `def` fails.
+      2. `"${outputDir}"` inside a `timeline`/`report`/`trace`/`dag` block
+         is a hard parse error (`` `outputDir` is not defined ``), not a
+         lint false positive. `outputDir` is write-only: settable, never
+         readable from a later statement.
+      3. Consequence: `params` is the only scope readable by both
+         `outputDir` and the trace blocks, so the run directory is
+         computed once into the derived param `run_output_dir`, declared
+         in `nextflow.config` only. It must never enter a params file.
+         T5.1 should mark it `hidden` in `nextflow_schema.json`.
+      4. Inside a `params` block a sibling key must be read as
+         `params.run`, not bare `run`.
+      5. `file()` is not available to the config parser. The conditional
+         `conf/aws.local.config` include uses
+         `new File("${projectDir}/...").exists()`. `projectDir` matters:
+         a bare relative path resolves against the launch directory, so
+         the file would be silently skipped.
+      6. A missing `includeConfig` target is a hard error even inside an
+         INACTIVE profile. This is why T1.5 added the `test`/`demo`
+         profile blocks together with the files they include, and why T2.2
+         must add the `conf/modules.config` include together with the file.
+      7. `overwrite = true` is required on all four trace blocks. Without
+         it `--run <name> -resume` — the supported resume workflow (R2.4)
+         — ends with "Report file already exists" warnings and leaves
+         stale provenance.
+      8. A process with a `stub:` but no `script:` fails to compile
+         ("Invalid process definition"). Every module in Waves 2-3 needs
+         both.
+      9. Lint warnings to obey in T4.2: use lowercase `channel`, not
+         `Channel`; prefix unused output-closure parameters with `_`.
+      CLOSED at T1.3 (was a CLAUDE.md section 11 open question): both
+      `outputDir = ...` and `workflow.output.mode = 'copy'` ARE settable
+      at top level. Published files are real copies, not symlinks;
+      `pipeline_info/` lands inside the run directory (R12.3);
+      `--run probe01 -resume` gave `cached=1` in the same directory (R2.4).
+      DECISION, with knock-on effects: per-module biocontainers, so NO
+      global `process.container`. R14.3 is therefore only partly met and
+      our image covers local modules only. See R14.3 as amended.
+      `conf/aws.config` deviates from "Design section 11: AWS readiness"
+      by using the native `aws.*`/`workDir` scopes rather than params, so
+      deployment settings stay out of the complete-parameter-set files.
+      Verified against live Nextflow docs: `aws.batch.cliPath` is
+      documented as a legacy requirement, superseded by Wave plus Fusion.
+      `nf-schema` pinned at 2.8.0 — the version T1.1 and T1.2 were
+      actually verified against, not the template's 2.5.1.
+- [x] **T1.4 Container.** `docker/Dockerfile`. Implements R14.3 and
       R12.2. micromamba base, multi-stage, non-root, every package pinned
       `version=build`. Build it; record the compressed size in
       `docs/container.md` (gitignored). Ask before pulling the base
       image. [Opus, High]
-      SCOPE NARROWED (T1.3, corrected T1.5): per-module biocontainers
+      SCOPE (set at T1.3, corrected at T1.5): per-module biocontainers
       were chosen over one global image, so `SIMPLEAF_INDEX`,
-      `SIMPLEAF_QUANT` and `QCATCH` never run in this image. This image
-      covers the LOCAL modules only: the four Scanpy steps, Quarto, and
-      the version and manifest scripts. Nothing simpleaf-related belongs
-      here — no `ALEVIN_FRY_HOME`, no `simpleaf set-paths`, no `ulimit`,
-      no whitelist. The nf-core simpleaf modules already do all of that
-      in their own script blocks; see R4.5, R5.6 and R5.7.
-- [ ] **T1.5 Data profiles.** `conf/test.config` and `conf/demo.config`,
+      `SIMPLEAF_QUANT` and `QCATCH` never run in this image. It covers the
+      LOCAL modules only: the four Scanpy steps, `ASSERT_R1_LENGTH`,
+      Quarto, and the version and manifest scripts. Nothing
+      simpleaf-related belongs here — no `ALEVIN_FRY_HOME`, no `simpleaf
+      set-paths`, no `ulimit`, no whitelist. The nf-core simpleaf modules
+      do all of that in their own script blocks; see R4.5, R5.6 and R5.7.
+      DELIVERED: `scrnaseq-lite:0.1.0`, base
+      `mambaorg/micromamba:2.9.0-debian13` pinned by digest, 243 packages,
+      2.66 GB uncompressed and **628 MB gzip-compressed** against R14.3's
+      2 GB budget. No registry prefix: built locally, pushed to Amazon ECR
+      separately, with the account-bearing URI confined to the gitignored
+      `conf/aws.local.config` (N4).
+      Verified by running, against the final image with no `-e`
+      overrides: non-root smoke test as an arbitrary host uid; the seeded
+      scientific paths (S+A layer reconstruction, scrublet, `seurat_v3`
+      HVG on RAW counts, PCA, UMAP, Leiden `igraph` `n_iterations=2`,
+      `rank_genes_groups`, h5ad round-trip, PNG) BIT-IDENTICAL across two
+      separate processes; and a real `quarto render` of a Python `.qmd`
+      producing an embedded PNG. That determinism run is what proves
+      scanpy 1.12.4 actually works on python 3.14.7 / pandas 3.0.5 /
+      numpy 2.5.2 — the solver only proved they were installable together.
+      Also delivered here, out of band at user request: the 10x barcode
+      whitelists are VENDORED at
+      `assets/whitelist/10x_V{2,3,4}_barcode_whitelist.txt.gz`, closing
+      the R5.6 run-time network dependency. From nf-core/scrnaseq tag
+      `4.2.0`; all three byte counts matched the GitHub contents API
+      exactly, every line a bare 16 bp `[ACGT]` barcode, zero malformed.
+      737,280 / 6,794,880 / 7,372,800 barcodes, 34.0 MB total. V4 has MORE
+      barcodes than V3 yet compresses smaller. V1 omitted: the R1.1 schema
+      enum cannot select it. Provenance and sha256 in
+      `assets/whitelist/README.md`. Corrected while vendoring: R5.6 said
+      the cost was "roughly 20 MB"; 2.2 + 18.4 + 13.4 is 34.0 MB.
+      CARRIED FROM T1.4 — container construction, all found by running:
+      1. `micromamba install -p <prefix>` REFUSES a prefix that does not
+         exist ("Environment must first be created with micromamba
+         create"). Use `create`. It is still one layer.
+      2. The `mambaorg/micromamba` base ends on `USER mambauser` (uid
+         57439). A second build stage inherits that user, so `useradd` and
+         any write to `/opt` fail. Stage 2 needs `USER root` first and
+         drops to `appuser` at the end. uid 1000 is free in this base.
+      3. SKIPPING CONDA ACTIVATION BREAKS QUARTO, in three stages. Putting
+         the env's `bin` on `PATH` rather than activating is fine for
+         Python and not for quarto: conda-forge ships
+         `etc/conda/activate.d/quarto.sh` exporting eight `QUARTO_*`
+         variables, and without them quarto hunts for its bundled tools
+         under `$QUARTO_BIN_PATH/tools/x86_64/`, which no conda layout
+         has. The failures are staggered, so a partial fix looks like
+         progress: share path missing -> `quarto --version` dies on
+         `cat: .../share/version`; `QUARTO_DENO` missing ->
+         `tools/x86_64/deno: No such file or directory`;
+         `QUARTO_DART_SASS` missing -> dies in `compileSass` AFTER the
+         Python kernel has run, so the log reads like success. Set the
+         whole set. One deliberate deviation: `activate.d/quarto.sh` ships
+         a BROKEN `QUARTO_DENO_DOM` pointing into the feedstock build
+         directory, absent from the image; `deno_dom.sh` has the real path.
+      4. `sc.pp.scrublet` requires `scikit-image` and says so only at RUN
+         time, not on import: "`threshold` is None and thus scrublet
+         requires `scikit-image`". R7.5 mandates that exact call, so the
+         package was genuinely missing. Re-solving with it moved no other
+         pin (closure 220 -> 243).
+      5. fontconfig does not create its own cache directory; it probes a
+         fixed list and gives up. Pre-create it in the image.
+      6. `docker.runOptions = '-u $(id -u):$(id -g)'` means an arbitrary
+         host uid with no `/etc/passwd` entry and no writable home. `HOME`,
+         `MPLCONFIGDIR`, `NUMBA_CACHE_DIR` and the `XDG_*` variables must
+         point at world-writable paths or scanpy fails to IMPORT.
+      7. `ps` reports `ps from procps-ng UNKNOWN` — it runs, which is all
+         Nextflow needs for trace metrics, but it carries no version
+         string. Relevant to T3.5: do not try to version-report it.
+      8. REPRODUCIBILITY GAP, open and deliberate: the Dockerfile pins the
+         21 packages it names, not the full 243-package closure. `numba`,
+         `llvmlite` and `libopenblas` are transitive and unpinned, and all
+         three affect numerical output, so a rebuild months later is not
+         guaranteed bit-identical. A given built image IS reproducible by
+         digest. Fix if wanted: install from a generated lockfile.
+         Recorded in R12.2 so the choice stays visible.
+      R12.4 MEASURED, not assumed: with `OMP_NUM_THREADS=1`, PCA changed
+      and UMAP followed, while scrublet, HVG, Leiden and markers were
+      unchanged. Document "PCA and UMAP may differ across BLAS thread
+      counts"; do NOT promise cluster stability, which held only on
+      well-separated synthetic data.
+- [x] **T1.5 Data profiles.** `conf/test.config` and `conf/demo.config`,
       plus `params/test.yaml`, `assets/samplesheet_test.csv` and
       `assets/samplesheet_demo.csv`. Implements R15.3.
       `conf/*.config` carry ENGINE settings only (`resourceLimits`); all
@@ -62,6 +242,36 @@ Rules:
       `https://github.com/nf-core/test-datasets` and from nf-core/scrnaseq
       4.2.0 `conf/test.config`. Do not construct URLs from memory.
       `demo` uses the local downsampled PBMC data from T5.2. [Opus, High]
+      Also added the `test`/`demo` profile blocks and
+      `manifest.contributors` to `nextflow.config`. Lint clean on all five
+      config files.
+      CARRIED FROM T1.5, verified by running:
+      1. **`-params-file` OUTRANKS params set in a config file**, and an
+         explicit `null` in the params file still wins. Probed with a
+         throwaway `-c` config setting `params.input = 'CONFIG_WINS'` plus
+         `-params-file params/default.yaml`; the result was `null`. This
+         is why `conf/test.config` and `conf/demo.config` carry ENGINE
+         settings only: a profile config that set `params.input` would be
+         silently nulled by any params file that did not.
+      2. nf-schema's `exists: true` and `format: file-path` DO accept
+         https URLs. `samplesheetToList` on the test samplesheet returned
+         full `https://...` URIs intact, so remote staging will work.
+      3. Both profiles resolve; `resourceLimits` is 2 CPU / 6 GB / 2 h for
+         `test` and 2 CPU / 8 GB / 1 h for `demo` (R14.4). Neither config
+         leaks a single `params.*`.
+      Test-data facts, read from the live sources and never constructed:
+      GRCm38 chr19 FASTA plus gencode vM19 GTF (83 MB together), the two
+      `Sample_{X,Y}_S1_L001` FASTQ pairs (~6 MB each), chemistry `10XV2`.
+      **R1 is 26 bp and R2 is 90 bp**, read from the FASTQ stream — so
+      `r2_read_length` is 90 here, not the PBMC 91 — and the reference is
+      MOUSE, so `mito_gene_prefix` is `mt-`.
+      `assets/samplesheet_test.csv` is ours because nf-core's has no
+      `chemistry` column and lists `Sample_Y` twice for two lanes, which
+      our `uniqueEntries` rule rejects by design (R1.4). Only L001 is
+      used. `assets/samplesheet_demo.csv` cannot validate until T5.2
+      creates the FASTQs it names; that is expected, not a bug.
+      KNOWN CEILING on `-profile test,docker`: see R15.3 as amended, and
+      T2.5, which settles it.
 
 ## Wave 2 — Upstream (parallel)
 
@@ -69,14 +279,14 @@ Rules:
       seqkit/stats, multiqc, simpleaf/index, simpleaf/quant and qcatch.
       Run `simpleaf chemistry lookup` (or the module's equivalent) inside
       the pinned container to confirm the registered chemistry strings
-      before writing the mapping table; not sure if the v4 string is `10xv4-3p`, not
-      `10xv4`. Make sure you update `conf/modules.config` and `.claude/specs/01-requirements.md`
-      with this information.
+      before writing the mapping table; not sure if the v4 string is
+      `10xv4-3p`, not `10xv4`. Make sure you update `conf/modules.config`
+      and `.claude/specs/01-requirements.md` with this information.
       Report the actual installed versions and container tags. Determine
       whether these modules report versions via `versions.yml` or via
-      topic channels, and record the answer in `.claude/specs/02-design.md` under
-      "Design section 2: Module inventory"; all local modules must then
-      match it. Never invent module names. [Opus, Medium]
+      topic channels, and record the answer in `.claude/specs/02-design.md`
+      under "Design section 2: Module inventory"; all local modules must
+      then match it. Never invent module names. [Opus, Medium]
       CARRIED FROM T1.5 — confirm these against the INSTALLED versions,
       all read from nf-core/scrnaseq 4.2.0:
       (a) `simpleaf/index` and `simpleaf/quant` already do
@@ -87,11 +297,28 @@ Rules:
           `--save_filtered_h5ad` and `--export_summary_table`. Do not
           repeat them in `ext.args` (R5.3a).
       (c) `simpleaf/quant` takes the whitelist as a staged channel input
-          and emits `--unfiltered-pl <file>`, so the R5.6 network
-          dependency is already avoided; what remains is where the
-          whitelist file comes from.
+          and emits `--unfiltered-pl <file>`. SETTLED AT T1.4: the files
+          are vendored at `assets/whitelist/`; R5.6 is closed.
       (d) THE TWO VERSION CONVENTIONS ARE MIXED: simpleaf modules emit
           `versions.yml`, `qcatch` emits to the `versions` topic (R12.1a).
+          CARRIED FROM T1.4 — (d) IS PROBABLY OBSOLETE. It was read from
+          nf-core/scrnaseq 4.2.0, which pins an OLD module snapshot:
+          simpleaf 0.19.5, container
+          `quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0`, output
+          `path "versions.yml"`. Current nf-core/modules ships simpleaf
+          **0.25.0**, container
+          `community.wave.seqera.io/library/simpleaf:0.25.0--b9f96d8b71a01864`,
+          emitting `topic: versions` for alevin-fry, piscem and simpleaf
+          alike — the same convention as `qcatch`. `nf-core modules
+          install` fetches the latter, so the conventions are likely NOT
+          mixed. Confirm against what actually installs, then correct
+          R12.1a and T3.5 rather than assuming either way.
+      (e) CARRIED FROM T1.4: nf-core/scrnaseq 4.2.0 `assets/protocols.json`
+          independently confirms the whole mapping table in "CLAUDE.md
+          section 4.3", `10xv4-3p` included — `10XV2`->`10xv2`/`10X_3p_v2`,
+          `10XV3`->`10xv3`/`10X_3p_v3`, `10XV4`->`10xv4-3p`/`10X_3p_v4`.
+          That is a second independent source, not a substitute for
+          running `simpleaf chemistry lookup` in the pinned container.
 - [ ] **T2.2 Module args.** `conf/modules.config`: `ext.args`,
       `ext.prefix`, `scratch = true` on `SIMPLEAF_INDEX` (R4.5 — and ONLY
       that; the module already sets `ALEVIN_FRY_HOME` and the open-file
@@ -99,9 +326,20 @@ Rules:
       earlier, incorrect amendment of this task), and the chemistry
       mapping from "CLAUDE.md section 4.3: Chemistry mapping — one source
       of truth". Do not repeat flags the modules hard-code; see T2.1 note
-      (b). Decide where the 10x whitelist comes from; see T2.1 note (c)
-      and R5.6. Also add `includeConfig 'conf/modules.config'` to
-      `nextflow.config`, which T1.3 deliberately left out.
+      (b). Also add `includeConfig 'conf/modules.config'` to
+      `nextflow.config`, which T1.3 deliberately left out — and note T1.3
+      finding 6: the include and the file must land together.
+      CARRIED FROM T1.4 — the whitelist SOURCING question is closed; the
+      files are vendored at
+      `assets/whitelist/10x_V{2,3,4}_barcode_whitelist.txt.gz` (R5.6).
+      Two things remain here:
+      (i)  extend the chemistry mapping to a THIRD column so one table
+           gives the simpleaf chemistry, the QCatch chemistry and the
+           whitelist filename. They must not be settable independently.
+      (ii) PROVE, by running it in the pinned simpleaf container, whether
+           `--unfiltered-pl` accepts a GZIPPED file. It is undocumented;
+           see R5.6. If it does not, decompress in the module. Do not
+           infer this from the fact that nf-core/scrnaseq passes `.txt.gz`.
       fastp args must not touch R1; comment the reason inline.
       Implements R3.1-R3.4, R5.1-R5.4, R6.4. [Opus, High]
 - [ ] **T2.3 R1 assertion.** `modules/local/assert_r1_length/main.nf`.
@@ -125,6 +363,24 @@ Rules:
       fixture, which nf-core itself skips it on. See R15.3. If it cannot,
       say so plainly and record what `-profile test,docker` does cover;
       do not weaken the pipeline to make the test pass.
+      WIRE `--cell_calling` HERE (R6.7). The parameter already exists in
+      all three params YAMLs; `params/test.yaml` sets `"threshold"`.
+      (i)   Branch the subworkflow on `params.cell_calling`:
+            `qcatch` -> `SIMPLEAF_QUANT -> QCATCH -> SCANPY_CELL_QC`;
+            `threshold` -> `SIMPLEAF_QUANT -> SCANPY_CELL_QC` directly.
+            No new module and no new science param: the crude cut is the
+            `min_genes`/`min_cells_per_gene` that `SCANPY_CELL_QC` already
+            applies under R7.2.
+      (ii)  An unrecognised value must fail fast with a readable message,
+            not fall through to a default.
+      (iii) MEASURE FIRST, then conclude: count the rows in the fixture's
+            raw matrix. Under `--unfiltered-pl` only barcodes seen at
+            least `--min-reads` times become rows and simpleaf passes 10
+            (R5.2), so the matrix may already be near-empty and the
+            `threshold` path may not rescue the profile either. If so,
+            lowering `--min-reads` via `ext.args` is the next lever.
+            Report the actual barcode count either way.
+      (iv)  Only `qcatch` may emit `*_filtered_matrix.h5ad` (R6.6).
 
 ## Wave 3 — Scanpy (parallel)
 
@@ -132,11 +388,34 @@ Rules:
       Implements R7.1-R7.4. Verify the QCatch h5ad layout empirically
       before writing the reader; do not assume the obs/var structure.
       [Opus, High]
+      CARRIED FROM T1.4, applies to all of Wave 3: anndata 0.13.3 returns
+      a spurious `None` among `adata.layers.keys()` — observed as
+      `['ambiguous', 'counts', 'spliced', 'unspliced', None]` after an
+      h5ad round-trip. Never blindly iterate or `sorted()` layer keys;
+      filter `None` first. This bites the R5.4a `S+A` reconstruction
+      directly.
+      Also CARRIED FROM T1.2: the gene patterns are params
+      (`mito_gene_prefix`, `ribo_gene_pattern`, `hb_gene_pattern`), so
+      this script holds no hard-coded gene patterns.
+      CARRIED FROM R6.7: this step receives EITHER QCatch's cell-called
+      matrix or, under `--cell_calling threshold`, the raw quantifier
+      matrix. Do not assume QCatch's obs/var columns are present — verify
+      the layout of both inputs empirically. Write
+      `adata.uns['cell_calling_method']` so provenance travels with the
+      h5ad after it leaves the results directory, and make the
+      barcode-rank plot (R7.3) work on whichever matrix arrives; it is
+      more informative on the raw one.
 - [ ] **T3.2 Doublets.** `bin/scanpy_detect_doublets.py` and its module.
       Implements R7.5-R7.7. Seeded. [Opus, Medium]
+      CARRIED FROM T1.4: `sc.pp.scrublet` needs `scikit-image`, which is
+      now in the image. It raises only at RUN time, so an import check
+      will not catch a regression here.
 - [ ] **T3.3 Normalise and cluster.** `bin/scanpy_normalise_cluster.py`
       and its module. Implements R8 and R9. Seeded throughout.
       [Opus, High]
+      CARRIED FROM T1.4: `flavor='seurat_v3'` needs `scikit-misc` and
+      `flavor='igraph'` needs `leidenalg`; both are in the image and both
+      were exercised in the T1.4 determinism run.
 - [ ] **T3.4 Marker genes.** `bin/scanpy_marker_genes.py` and its module.
       Implements R10. No filename, header, comment or plot title may say
       DE or DGE. [Opus, Medium]
@@ -144,10 +423,18 @@ Rules:
       `versions.tsv`. Implements R12.1. [Opus, Medium]
       CARRIED FROM T1.5: `COLLECT_VERSIONS` must consume BOTH conventions
       — the `versions.yml` files emitted by the simpleaf modules and the
-      `versions` topic used by `qcatch`. See R12.1a.
+      `versions` topic used by `qcatch`. See R12.1a. But see T2.1 note
+      (d): after `nf-core modules install` this may collapse to the topic
+      convention alone. Settle it at T2.1, not here.
+      CARRIED FROM T1.4: do not try to version-report `ps`; the
+      `procps-ng` build in the image reports `UNKNOWN`.
 - [ ] **T3.6 Run manifest.** `bin/write_run_manifest.py` and its module ->
       `params_resolved.yaml` and `run_manifest.yaml`. Implements R2.5.
       [Opus, Medium]
+      CARRIED FROM R6.7: `run_manifest.yaml` must record `cell_calling`.
+      A run whose cells were called by a crude threshold has to be
+      distinguishable from one that used the ambient model, from the
+      results directory alone.
 
 ## Wave 4 — Assembly (sequential)
 
@@ -160,18 +447,54 @@ Rules:
       with `publish:` and `output` blocks. Implements R13 and follows
       "Design section 5: Publishing" and "Design section 6: main.nf
       structure". Highest-consequence file in the repo. [Opus, Max]
+      This task is what first makes `nextflow run .` possible; the
+      after-every-task run check in the Rules above only becomes real
+      here. Obey T1.3 finding 9 (lowercase `channel`, `_`-prefixed unused
+      output-closure parameters) and finding 8 (every process needs both
+      `script:` and `stub:`).
+      CARRIED FROM R6.7: under `--cell_calling threshold` QCATCH does not
+      run, so the `qcatch` entry in `publish:` receives an EMPTY channel
+      while still needing its matching `output` entry, which carries
+      `index { ... header true }`. VERIFY by running that an empty channel
+      publishes cleanly rather than erroring or leaving a header-only CSV
+      behind. `-profile test` exercises this path, so it is not a corner
+      case.
 - [ ] **T4.3 MultiQC.** `assets/multiqc_config.yaml` plus custom-content
       injection of the QCatch summary CSV and the Scanpy QC TSV.
       Implements R11.1. [Opus, High]
+      CARRIED FROM R6.7: under `--cell_calling threshold` the QCatch
+      summary CSV does not exist, and it is MultiQC's ONLY quantifier-QC
+      source (design section 2). The report must then cover reads and the
+      Scanpy QC TSV only — and must SAY so, with a visible banner naming
+      the cell-calling method, rather than letting the section silently
+      vanish as though quantifier QC had passed.
 - [ ] **T4.4 Analysis report.** `report/analysis_report.qmd` and its
       module. Implements R11.3 and R11.4. [Opus, Medium]
+      CARRIED FROM T1.4 — the `.qmd` must NOT call
+      `matplotlib.use("Agg")`. Under quarto's jupyter engine that silently
+      suppresses every figure: the render SUCCEEDS, prints no warning, and
+      the HTML simply contains zero `<img>` tags. Verified both ways in
+      the T1.4 image. Rendering is otherwise confirmed working —
+      `quarto render --to html --embed-resources` produced an embedded PNG
+      and the executed cell's stdout.
+      CARRIED FROM R6.7: the report carries a visible banner whenever
+      `cell_calling != 'qcatch'`, stating that cells were called by a
+      crude threshold with no ambient model and that the result is not
+      publishable. Read it from `adata.uns['cell_calling_method']`, which
+      travels with the h5ad, rather than from the param.
 
 ## Wave 5 — Data, run, validate
 
-- [ ] **T5.1 Schemas2.** `nextflow_schema.json` via `nf-core pipeline schema build`
-      (pushed back here, as `nf-core pipeline schema build` requires a pipeline with
-      `main.nf`).
-      Implements R1.2-R1.4. [Opus, High]
+- [ ] **T5.1 Schemas2.** `nextflow_schema.json` via
+      `nf-core pipeline schema build` (pushed back here, as it requires a
+      pipeline with `main.nf`). Implements R1.2-R1.4. [Opus, High]
+      CARRIED FROM T1.3: mark the derived param `run_output_dir` as
+      `hidden`.
+      CARRIED FROM R6.7: `cell_calling` is an enum,
+      `["qcatch", "threshold"]`, default `qcatch`. Its schema description
+      must state that `threshold` performs no ambient modelling and is not
+      acceptable for real data — the schema is what `nf-core pipeline
+      schema build` surfaces to users, so the warning belongs there too.
 - [ ] **T5.2 Test data.** `bin/download_and_downsample_testdata.sh`.
       Implements R15.4-R15.9. All dataset facts are already verified in
       "Requirements R15.4"; do not re-derive them, but DO read the actual
@@ -192,6 +515,8 @@ Rules:
       Assert equal read counts and identical read-name order in the R1/R2
       outputs before writing. Record the CC BY 4.0 attribution for both
       datasets. Idempotent and re-runnable. [Opus, High]
+      This is what makes `assets/samplesheet_demo.csv` validate; until
+      then its failure is expected (T1.5).
 - [ ] **T5.3 Green run.** Full `-stub-run`, then `-profile test,docker`,
       then the real `-profile demo,docker` two-sample run. Fix to green.
       [Opus, High]
@@ -202,8 +527,16 @@ Rules:
       (R2.4), the difference between the `test` and `demo` profiles
       (R15.3), the two subsampling strategies and why they differ (R15.5),
       and the dataset licence and attribution (R15.9). Add one line to
-      `README.md` noting that the pipeline was built spec-driven development
-      and that the requirements, design and task documents are in `.claude/specs/`.
-      No private or environment-specific information (N4). [Opus, Medium]
+      `README.md` noting that the pipeline was built spec-driven
+      development and that the requirements, design and task documents are
+      in `.claude/specs/`. No private or environment-specific information
+      (N4). [Opus, Medium]
+      CARRIED FROM T1.4: word the reproducibility claim as "PCA and UMAP
+      coordinates may differ across BLAS thread counts" (R12.4). Do not
+      promise cluster stability across thread counts.
 - [ ] **T5.6 Changelog.** Finalise `CHANGELOG.md` 0.1.0 with today's date.
       A single "Initial implementation" entry only. [Opus, Low]
+- [ ] **T5.7 CITATIONS.md.** Include a `CITATIONS.md` with the relevant
+      citations for this pipeline, from
+      `https://raw.githubusercontent.com/nf-core/scrnaseq/refs/tags/4.2.0/CITATIONS.md`.
+      Keep only the tools this pipeline actually runs. [Opus, Low]

@@ -131,11 +131,26 @@ between conditions.
 ### R5 — Quantification
 
 - R5.1 `simpleaf quant` with the piscem backend (`--mapper_backend`).
-- R5.2 The permit-list mode is `--unfiltered-pl`, producing an unfiltered
-  matrix over the full 10x whitelist for the declared chemistry. No knee,
-  `--expect-cells`, `--forced-cells` or fixed-UMI filtering at this step:
-  cell calling is QCatch's job (R6). These modes are mutually exclusive in
-  simpleaf, so passing more than one is a runtime error.
+- R5.2 The permit-list mode is `--unfiltered-pl`, producing a matrix with
+  no cell calling applied. No knee, `--expect-cells`, `--forced-cells` or
+  fixed-UMI filtering at this step: cell calling is QCatch's job (R6).
+  These modes are mutually exclusive in simpleaf, so passing more than one
+  is a runtime error.
+  *CORRECTED at T1.4-follow-up. This requirement previously read
+  "an unfiltered matrix over the full 10x whitelist", which is wrong and
+  was repeated in "CLAUDE.md section 4.2" and the design dataflow. Read
+  from the alevin-fry `generate-permit-list` docs: under `--unfiltered-pl`
+  the whitelist is the barcode-CORRECTION reference, not the row set. Only
+  barcodes observed at least `--min-reads` times become matrix rows;
+  sub-threshold barcodes are not discarded outright, but their reads are
+  corrected onto retained cells rather than forming rows of their own.
+  simpleaf passes `--min-reads 10` explicitly. "Unfiltered" is accurate
+  only in the sense that no cell calling has happened.*
+  *Consequence for T2.2: `--min-reads` is a real knob that decides how
+  many barcodes reach the matrix, and it is the most direct lever on the
+  R15.3 fixture problem — lowering it admits more barcodes. Decide
+  deliberately whether to expose it or leave simpleaf's 10 alone; do not
+  leave it unconsidered.*
 - R5.3 `--resolution` is a required simpleaf argument. It defaults to
   `cr-like` (`params.umi_resolution`), overridable to `cr-like-em`.
 - R5.3a `--anndata-out` is passed, producing `af_quant/quants.h5ad`.
@@ -162,11 +177,31 @@ between conditions.
   *Settled at T1.5: the nf-core `simpleaf/quant` module never relies on
   the cache. Its `cellFilteringArgs` helper emits
   `--unfiltered-pl ${cb_list}` from a staged whitelist channel, so the
-  whitelist is ALWAYS an explicit file. What remains is a sourcing
-  decision for T2.2: nf-core/scrnaseq vendors the whitelists in-repo at
-  `assets/whitelist/10x_V{1,2,3,4}_barcode_whitelist.txt.gz` (2.2 MB for
-  v2, 18.4 MB for v3, 13.4 MB for v4). Vendoring removes the network
-  dependency outright at the cost of roughly 20 MB in a public repo.*
+  whitelist is ALWAYS an explicit file.*
+
+  *SETTLED AT T1.4 — this requirement is now CLOSED. The whitelists are
+  VENDORED in this repository at
+  `assets/whitelist/10x_V{2,3,4}_barcode_whitelist.txt.gz`, taken from
+  nf-core/scrnaseq at tag `4.2.0`. No run reaches the network for a
+  whitelist, on any node or in any VPC. Verified by download: 737,280 /
+  6,794,880 / 7,372,800 barcodes, byte counts identical to those the
+  GitHub contents API reports for that tag, every line a bare 16 bp
+  `[ACGT]` string. Provenance and sha256 in `assets/whitelist/README.md`.*
+
+  *V1 is deliberately absent: R1.1's `chemistry` enum is `10XV2`, `10XV3`,
+  `10XV4`, so a V1 list could never be selected.*
+
+  *Cost correction: this requirement previously said "roughly 20 MB".
+  2.2 + 18.4 + 13.4 MB is **34.0 MB**. The earlier figure was an
+  arithmetic slip.*
+
+  *OPEN for T2.2, do not assume either way: whether simpleaf accepts a
+  GZIPPED permit list. nf-core/scrnaseq passes `.txt.gz` directly and
+  simpleaf's own registry caches `3M-febrary-2018.txt.gz` and
+  `3M-3pgex-may-2023.txt.gz` gzipped, but no simpleaf or alevin-fry
+  documentation states it, and at least one user log shows a plain `.txt`.
+  Prove it in the pinned container at T2.2. If it fails, decompress in the
+  module; the vendored files stay gzipped either way.*
 - R5.7 simpleaf requires `ALEVIN_FRY_HOME` to be set and
   `simpleaf set-paths` to have been run.
   *Settled at T1.5: the nf-core simpleaf modules do both in their own
@@ -189,6 +224,46 @@ between conditions.
   assays with no mapping.
 - R6.5 The QCatch HTML report is published per sample.
 - R6.6 QCatch's cell-called matrix is named `*_filtered_matrix.h5ad`.
+- R6.7 `--cell_calling` selects how cells are separated from empty droplets.
+  Enum, default `qcatch`:
+  - `qcatch` — R6.1's two-step EmptyDrops-style ambient model. The only
+    acceptable choice for real data.
+  - `threshold` — QCATCH does not run. The unfiltered quantifier matrix
+    goes straight to `SCANPY_CELL_QC`, where `min_genes` and
+    `min_cells_per_gene` (R7.2) act as a crude cut. NO ambient model.
+
+  *Added at T1.4-follow-up. Rationale: the `test` fixture is ~60,000 read
+  pairs against 5,000 declared cells, about 12 reads per cell, and
+  nf-core/scrnaseq sets `skip_qcatch = true` on that exact dataset with the
+  comment "module does not work on small dataset". Without an escape hatch
+  the `test` profile cannot exercise the DAG past quantification (R15.3).*
+
+  *NAMING, deliberate: nf-core calls this `skip_qcatch`, but in THEIR
+  pipeline QCatch is an optional QC report and the raw matrix is emitted
+  either way. Here QCATCH is on the critical path and is the cell caller,
+  so "skip the QC step" would badly understate the consequence. The
+  parameter is named for the scientific choice it makes.*
+
+  *CONSTRAINTS on `threshold`, all mandatory:*
+  - *It is not scientifically acceptable for real data. A global cut
+    discards genuine low-count cells; see "CLAUDE.md section 4.4".*
+  - *Only `qcatch` may produce `*_filtered_matrix.h5ad` (R6.6). Output
+    from the `threshold` path must never carry that name.*
+  - *The method is recorded in `adata.uns['cell_calling_method']`, in
+    `run_manifest.yaml` (R2.5), and as a visible banner in the MultiQC and
+    Quarto reports whenever it is not `qcatch`.*
+  - *An unrecognised value is a hard failure, not a silent default.*
+
+  *RESIDUAL RISK for T2.5 — the mechanism is CONFIRMED, the outcome on
+  this fixture is not. Confirmed from the alevin-fry
+  `generate-permit-list` docs: under `--unfiltered-pl` only barcodes seen
+  at least `--min-reads` times become matrix rows, and simpleaf passes
+  `--min-reads 10`. So the matrix handed to the `threshold` path is
+  already thinned, and on a ~60,000-read-pair fixture it may hold too few
+  barcodes for that path to help either. NOT YET MEASURED: count the rows
+  in the fixture's raw matrix at T2.5 before declaring the escape hatch
+  works. If it is near-empty, lowering `--min-reads` via `ext.args` is the
+  next lever (see R5.2), not a weakening of the pipeline.*
 
 ### R7 — Cell QC and doublets
 
@@ -261,11 +336,32 @@ between conditions.
   still pick one convention and use it consistently; T2.1 decides which,
   after checking what the installed modules actually do.*
 - R12.2 Every tool pinned to an exact version in the container.
+  *Partly met at T1.4, and the shortfall is deliberate. `docker/Dockerfile`
+  pins the 21 packages it NAMES to exact `version=build` triples, all taken
+  from a `micromamba create --dry-run --json` solve. It does NOT pin the
+  full 243-package closure, so `numba`, `llvmlite` and `libopenblas` —
+  all of which affect numerical output — float on rebuild. A given built
+  image is reproducible by digest; a rebuild from source months later is
+  not guaranteed bit-identical. Fix, if this is ever wanted: install from
+  a generated lockfile instead of a package list. See `docs/container.md`.*
 - R12.3 Nextflow `timeline`, `report`, `trace` and `dag` in
   `pipeline_info/`.
 - R12.4 Identical inputs, params, seed and container digest give identical
   cluster assignments. Document that PCA may vary across differing BLAS
   thread counts.
+  *MEASURED at T1.4, in the built image, seeded, across separate
+  processes. Two runs at the same thread count were bit-identical for
+  every step. Re-running with `OMP_NUM_THREADS=1` and
+  `OPENBLAS_NUM_THREADS=1`:*
+  - *PCA CHANGED (`a9d8995ac8386167` -> `cebcc34aa1e99705`) and UMAP
+    inherited the change (`23f19efb7c366681` -> `e59b4bd7aaeb86a3`).*
+  - *scrublet, `seurat_v3` HVG selection, Leiden assignments and
+    `rank_genes_groups` were UNCHANGED.*
+  *So the caveat above is correct and belongs in the docs. Write it as
+  "PCA and UMAP coordinates may differ across BLAS thread counts". Do NOT
+  promise that cluster assignments are stable across thread counts: they
+  held on well-separated synthetic data, which is not evidence about real
+  samples. Full digests in `docs/container.md`.*
 
 ### R13 — Output organisation
 
@@ -294,6 +390,24 @@ between conditions.
   responsible for every tool it needs. Cost accepted: several image
   pulls rather than one, and no single digest to pin for R12.4;
   `versions.tsv` (R12.1) is what records what actually ran.*
+  *BUILT AND MEASURED at T1.4. Tag `scrnaseq-lite:0.1.0`, no registry
+  prefix: built from `docker/Dockerfile` and used locally by
+  `-profile docker`. Base `mambaorg/micromamba:2.9.0-debian13`, pinned by
+  digest `sha256:ed1bc628...`. Two stages on that one base; the second
+  copies `/opt/env` and sets `ENTRYPOINT []`.*
+  *Size: 2.66 GB uncompressed, **628 MB gzip-compressed** — the target is
+  under 2 GB compressed, so this passes comfortably.*
+  *The AWS target is AMAZON ECR. That URI embeds the AWS account ID, so it
+  must never appear in a tracked file (N4); it belongs in the gitignored
+  `conf/aws.local.config` as a container override.*
+  *Two run-time constraints the image MUST keep satisfying, both verified:
+  (a) `docker.runOptions = '-u $(id -u):$(id -g)'` gives an arbitrary host
+  uid with no `/etc/passwd` entry and no writable home, so `HOME`,
+  `MPLCONFIGDIR`, `NUMBA_CACHE_DIR` and the `XDG_*` variables must point
+  at world-writable paths or scanpy fails to IMPORT; (b) conda activation
+  is skipped in favour of `PATH`, so the eight `QUARTO_*` variables that
+  `etc/conda/activate.d/quarto.sh` would have exported must be set
+  explicitly or `quarto render` fails. See `docs/container.md`.*
 - R14.4 `-profile demo` completes on 2 CPUs / 8 GB RAM in under 20 minutes
   using the bundled downsampled data and a pre-built index.
 
@@ -317,13 +431,29 @@ between conditions.
     *KNOWN CEILING: nf-core sets `skip_qcatch = true` on this dataset
     ("module does not work on small dataset") and its 4.2.0 simpleaf test
     emits no QCATCH output at all — roughly 60,000 read pairs against
-    5,000 declared cells is about 12 reads per cell. This pipeline cannot
-    skip cell calling. So `-profile test -stub-run` is the always-green
-    check; `-profile test,docker` is expected green through
-    `SEQKIT_STATS`, `FASTP`, `SIMPLEAF_INDEX` and `SIMPLEAF_QUANT`; and
-    QCATCH onward is an open risk that T2.5 settles. `params/test.yaml`
-    lowers the QC and clustering values to give it the best chance, and
-    marks each as a fixture value.*
+    5,000 declared cells is about 12 reads per cell.*
+
+    *AMENDED after T1.4. The earlier text concluded "this pipeline cannot
+    skip cell calling" and left QCATCH-onward as an open risk. R6.7 now
+    supplies the answer: `params/test.yaml` sets
+    `cell_calling: "threshold"`, so QCATCH does not run on the fixture and
+    the unfiltered matrix goes straight to `SCANPY_CELL_QC`. Cell calling
+    is not skipped; it is done crudely, and labelled as such everywhere it
+    appears. This is acceptable ONLY because this profile's results are
+    already declared meaningless.*
+
+    *So `-profile test -stub-run` is the always-green check, and
+    `-profile test,docker` is expected green through `SEQKIT_STATS`,
+    `FASTP`, `SIMPLEAF_INDEX`, `SIMPLEAF_QUANT` and the Scanpy chain.
+    `params/test.yaml` lowers the QC and clustering values to give it the
+    best chance, and marks each as a fixture value.*
+
+    *RESIDUAL RISK, for T2.5: `--unfiltered-pl` applies alevin-fry's
+    `--min-reads` cut before a barcode reaches the matrix, so the
+    unfiltered matrix may itself be near-empty on a fixture this small.
+    Count the barcodes. If there are too few, say so plainly and record
+    what `-profile test,docker` does cover; do not weaken the pipeline to
+    manufacture a green run.*
   - `demo` — local downsampled human PBMC data (R15.4). This is the run
     that produces presentable results.
 - R15.4 The demo dataset is 10x `pbmc_1k_v3` and `pbmc_10k_v3`. Same

@@ -16,11 +16,16 @@ samplesheet.csv
    |                                                       |
    v                                                       |
 SIMPLEAF_QUANT  <-- index (SIMPLEAF_INDEX | --simpleaf_index)
-   | *_raw_matrix.h5ad  (unfiltered, full whitelist)       |
-   v                                                       |
-QCATCH --> *_filtered_matrix.h5ad + report.html + summary.csv
+   | *_raw_matrix.h5ad  (no cell calling; rows are the     |
+   |  whitelist barcodes seen >= --min-reads times)        |
    |                                                       |
-   v                                                       |
+   +--[ --cell_calling qcatch, DEFAULT ]--> QCATCH         |
+   |      *_filtered_matrix.h5ad + report.html + summary.csv
+   |                              |                        |
+   +--[ --cell_calling threshold ]+                        |
+   |    fixture escape hatch, no  |                        |
+   |    ambient model; see R6.7   |                        |
+   v                              v                        |
 SCANPY_CELL_QC --> h5ad + PNG     + qc_mqc.tsv ------------+
    |                                                       |
    v                                                       |
@@ -65,6 +70,21 @@ demonstration pipeline that trade-off favours separation.
 
 **Design decision — QCatch for cell calling.** It is the only tool that
 reads alevin-fry output natively and models the ambient pool.
+
+*Amended by R6.7: `--cell_calling threshold` bypasses QCATCH entirely and
+sends the raw matrix straight to `SCANPY_CELL_QC`. That exists for
+fixtures too small for an ambient model and is not acceptable for real
+data. Two consequences to design for, not to discover later:*
+
+1. *`QCATCH` becomes conditional, so the `qcatch` entry in `publish:`
+   receives an EMPTY channel. Every `publish:` name still needs its
+   matching `output` entry (see "Publishing" below), and that entry uses
+   `index { ... header true }`. T4.2 must verify an empty channel
+   publishes cleanly rather than erroring or leaving a header-only CSV.*
+2. *MultiQC then has NO quantifier QC at all — see the next decision, the
+   QCatch summary CSV is its only source for that. Under `threshold`,
+   MultiQC covers reads (seqkit, fastp) and the Scanpy QC TSV only. State
+   that in the report rather than letting the section silently vanish.*
 
 **Design decision — no MultiQC module for the quantifier.** MultiQC ships
 modules for fastp, SeqKit, Salmon, Kallisto, Bustools and Cell Ranger, but
@@ -186,6 +206,34 @@ software manifest, which matters more here than saving 200 MB. A single
 then `micromamba clean --all --yes`. Multi-stage to drop the solver cache.
 Non-root user.
 
+*Built at T1.4; four corrections to the paragraph above, all found by
+running it. Full detail in `docs/container.md`.*
+
+1. *It is `micromamba **create** -p /opt/env`, not `install`. `install`
+   refuses a prefix that does not yet exist.*
+2. *BOTH stages use the same micromamba base, pinned by digest. A slimmer
+   runtime OS was considered and rejected: one base means one image to
+   audit and no second glibc to reason about, and `COPY --from` already
+   drops the solver cache, which is what this design asked for. Stage 2
+   needs `USER root` before `useradd` — the base ends on `USER mambauser`
+   — and sets `ENTRYPOINT []`, because Nextflow appends its command to the
+   image entrypoint and the base's is an activation wrapper.*
+3. *Putting `/opt/env/bin` on `PATH` deliberately SKIPS conda activation.
+   That is fine for Python and NOT fine for quarto: conda-forge ships
+   `etc/conda/activate.d/*.sh` exporting eight `QUARTO_*` variables, and
+   without them quarto hunts for its bundled deno, dart-sass, typst and
+   esbuild under `$QUARTO_BIN_PATH/tools/x86_64/`, which no conda layout
+   has. Set them explicitly.*
+4. *`docker.runOptions = '-u $(id -u):$(id -g)'` means an arbitrary host
+   uid owning nothing, so `HOME`, `MPLCONFIGDIR`, `NUMBA_CACHE_DIR` and
+   the `XDG_*` variables must point at world-writable paths, and
+   fontconfig's cache directory must be PRE-CREATED because fontconfig
+   will not create its own. Without this, numba cannot cache and
+   `import scanpy` fails outright.*
+
+*Measured: 2.66 GB uncompressed, 628 MB gzip-compressed, against the
+R14.3 budget of 2 GB compressed.*
+
 ## 9. Error handling
 
 - Retry on exit codes 130, 137, 140, 143 with memory escalation via
@@ -204,11 +252,15 @@ Five things are fetched:
 | 2 | splici index | built from 1, once | ~2 GB; reuse via `--simpleaf_index` |
 | 3 | pbmc_1k_v3 FASTQs | `bin/download_and_downsample_testdata.sh` | ~66.6M read pairs |
 | 4 | pbmc_10k_v3 FASTQs + filtered barcode matrix | `bin/download_and_downsample_testdata.sh` | ~638.9M read pairs; stream-filter |
-| 5 | 10x barcode whitelist | simpleaf, at run time | silent network dependency; see R5.6 |
+| 5 | 10x barcode whitelist | NOTHING — vendored in-repo at T1.4 | `assets/whitelist/`; see R5.6 |
 
-Item 5 is the one that surprises people. `--unfiltered-pl` without an
-explicit path makes simpleaf resolve and cache the whitelist under
-`ALEVIN_FRY_HOME`. Pre-seed it in the image or pass it explicitly.
+Item 5 used to be the one that surprises people: `--unfiltered-pl` without
+an explicit path makes simpleaf resolve and cache the whitelist under
+`ALEVIN_FRY_HOME`, a network call in the middle of a run. **Closed at
+T1.4.** Only four things are fetched now. The whitelists for all three
+supported chemistries are vendored at `assets/whitelist/` (34.0 MB, from
+nf-core/scrnaseq 4.2.0) and staged as an ordinary channel input, so the
+path is always explicit and never resolved. See R5.6.
 
 The pbmc FASTQ URLs follow the pattern
 `https://cf.10xgenomics.com/samples/cell-exp/3.0.0/<name>/<name>_fastqs.tar`
@@ -236,7 +288,14 @@ idempotent step over the downloaded files.
 - No `file()` on relative paths.
 - `conf/aws.config` exposes region, queue and work dir as params with no
   values; real values go in the gitignored `conf/aws.local.config`.
-- Container in a registry reachable from the VPC.
+- Container in a registry reachable from the VPC. *Settled at T1.4: that
+  registry is AMAZON ECR. The image is built locally as
+  `scrnaseq-lite:0.1.0` with no registry prefix and pushed to ECR
+  separately. The ECR URI contains the AWS account ID, so it must never
+  reach a tracked file (N4) — it goes in `conf/aws.local.config` as a
+  container override, alongside the other deployment values.*
+- *No barcode whitelist is fetched at run time any more; the files are
+  vendored (R5.6, settled at T1.4). One less thing the VPC must reach.*
 - `SIMPLEAF_INDEX` needs `scratch = true`; see "Requirements R4.5".
 - Verify the current recommended Batch execution path
   (`aws.batch.cliPath` versus Fusion/Wave) before writing

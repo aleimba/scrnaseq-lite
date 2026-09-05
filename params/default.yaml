@@ -47,7 +47,23 @@ count_layer: "S+A"             # spliced+ambiguous, the USA convention for whole
                                # layers; reading X and assuming it matches is a silent
                                # correctness bug.
 
-# --- Cell calling (QCatch) ------------------------------------------------
+# --- Cell calling ---------------------------------------------------------
+# How cells are separated from empty droplets. Two methods:
+#
+#   qcatch     QCatch's two-step EmptyDrops-style ambient model. The only
+#              scientifically acceptable choice for real data.
+#   threshold  NO ambient model. The unfiltered quantifier matrix goes
+#              straight to the Scanpy QC step, where min_genes and
+#              min_cells_per_gene below act as a crude cut.
+#
+# `threshold` exists for ONE reason: a fixture too small to give an ambient
+# model anything to work with, so the DAG can still be exercised end to end.
+# It is NOT a "faster" or "simpler" setting. A global cut discards real
+# low-count cells — PBMCs carry only ~1 pg RNA — so results produced with
+# it are not publishable and must never be presented as cell-called.
+# Only `qcatch` produces *_filtered_matrix.h5ad.
+cell_calling: "qcatch"
+
 # QCatch chemistry is derived from the samplesheet `chemistry` column via the
 # mapping in conf/modules.config, so it cannot drift from the simpleaf
 # chemistry. Set the value below only for custom assays with no mapping.

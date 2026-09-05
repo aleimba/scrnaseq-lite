@@ -56,11 +56,32 @@ umi_resolution: "cr-like"
 permit_list_mode: "unfiltered-pl"
 count_layer: "S+A"
 
-# --- Cell calling (QCatch) ------------------------------------------------
-# Stays null: 10XV2 has a chemistry mapping, so QCatch receives
-# --chemistry 10X_3p_v2 and derives its own partition range. n_partitions
-# is reserved for assays with no mapping, and passing both would specify
-# the same thing twice.
+# --- Cell calling ---------------------------------------------------------
+# TEST fixture value (default "qcatch"). This is the one parameter here that
+# changes the SCIENCE rather than a threshold, so it gets the long comment.
+#
+# The fixture is roughly 60,000 read pairs against 5,000 declared cells —
+# about 12 reads per cell. There is no ambient distribution to model, and
+# nf-core/scrnaseq sets `skip_qcatch = true` on this exact dataset with the
+# comment "module does not work on small dataset". `threshold` sends the
+# unfiltered quantifier matrix straight to the Scanpy QC step, where the
+# lowered min_genes below acts as a crude cut, so the DAG runs end to end.
+#
+# This is NOT cell calling and the output must never be described as
+# cell-called. It is acceptable here only because this profile's results are
+# already declared meaningless; see the PURPOSE note at the top of this file.
+# params/demo.yaml is the run that produces real numbers, and it uses qcatch.
+#
+# NOT YET PROVEN to rescue this profile: `--unfiltered-pl` applies
+# alevin-fry's --min-reads cut (default 10) before a barcode reaches the
+# matrix, so on a fixture this small the unfiltered matrix may itself hold
+# too few barcodes. T2.5 must count them before relying on this.
+cell_calling: "threshold"      # TEST fixture value (default "qcatch")
+
+# Unused while cell_calling is "threshold" — QCatch does not run. Kept at
+# null so the key set matches the other params files, and correct if this
+# profile is ever switched back: 10XV2 has a chemistry mapping, so QCatch
+# would receive --chemistry 10X_3p_v2 and derive its own partition range.
 qcatch_n_partitions: null
 
 # --- Cell QC --------------------------------------------------------------
