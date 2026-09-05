@@ -56,8 +56,12 @@ rather than guessing.
     it); the pipeline adds only `scratch = true` on `SIMPLEAF_INDEX`.
 18b5. State whether the barcode whitelist is pre-seeded in the container
     or fetched at run time, and confirm the choice is documented.
-18c. Confirm `--use-piscem` is passed at INDEX time and not duplicated at
-    quant time.
+18c. Confirm NO mapper flag is passed anywhere. `--use-piscem` does not
+    exist in simpleaf 0.30.0 (settled at T2.2); piscem is the only backend
+    and there is no `mapper_backend` param. Confirm instead that
+    `simpleaf index` gets `--rlen` from `params.r2_read_length` and a
+    `--ram-limit-gib` derived from `task.memory` rather than the tool's
+    host-independent 8 GiB default.
 18d. Confirm the index is referenced as `<dir>/index/`.
 19. Confirm `SIMPLEAF_INDEX` sets `scratch = true`.
 20. Confirm the samplesheet `chemistry` value drives BOTH the simpleaf

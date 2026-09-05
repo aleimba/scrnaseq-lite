@@ -51,7 +51,7 @@ gtf: "https://github.com/nf-core/test-datasets/raw/scrnaseq/reference/gencode.vM
 r2_read_length: 90             # TEST: verified from the FASTQ; 90 bp here, not the 91 bp of the PBMC data
 
 # --- Quantification -------------------------------------------------------
-mapper_backend: "piscem"
+# No mapper_backend key: piscem is simpleaf 0.30.0's only backend (T2.2).
 umi_resolution: "cr-like"
 permit_list_mode: "unfiltered-pl"
 count_layer: "S+A"

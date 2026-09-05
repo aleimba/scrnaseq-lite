@@ -88,6 +88,15 @@ between conditions.
 - R3.3 fastp read outputs are not consumed downstream; `SIMPLEAF_QUANT`
   reads the original FASTQs. The pipeline performs no read cleaning.
   Document this and its consequence (no poly-G trimming).
+  *Settled at T2.2: the module's `discard_trimmed_pass` input makes fastp
+  write NO read files at all, which is stronger than not consuming them —
+  nothing is produced to consume. The module's meta.yml describes it as
+  exactly this use ("to use fastp for the output report only"), so T4.1
+  passes `true`. Verified by running, because the mechanism looks like a
+  bug: the module emits `def out_fq1 = discard_trimmed_pass ?: "--out1 ..."`,
+  so a `true` puts a bare `true` token on the fastp command line. fastp
+  1.3.6 tolerates the stray tokens, exits 0 and writes both the JSON and
+  the HTML.*
 - R3.4 fastp emits JSON and HTML for MultiQC.
 
 ### R4 — Reference preparation
@@ -95,12 +104,29 @@ between conditions.
 - R4.1 A pre-built splici index is accepted via `--simpleaf_index`.
 - R4.2 When `--build_index` is set, `simpleaf index` builds the splici
   (spliced + intronic) index in one command:
-  `simpleaf index --use-piscem --output <dir> --fasta <fa> --gtf <gtf>
-  --threads <n>`. Passing a genome FASTA and a GTF is what selects the
-  splici strategy; there is no separate splici flag.
-- R4.2a Because `--use-piscem` is set at index time, subsequent
-  `simpleaf quant` runs against this index use piscem automatically. Do
-  not also pass a mapper flag at quant time.
+  `simpleaf index --output <dir> --fasta <fa> --gtf <gtf> --threads <n>
+  --rlen <r2_read_length>`. Passing a genome FASTA and a GTF is what
+  selects the splici strategy; there is no separate splici flag.
+  *CORRECTED at T2.2, read from `simpleaf index --help` in the pinned
+  container: **simpleaf 0.30.0 has no `--use-piscem` flag, and no mapper
+  flag at all.** piscem is the only backend; the help has a "Piscem Index
+  Options" section and no salmon option. This requirement previously
+  showed `--use-piscem` in the command line. `--ref-type` defaults to
+  `spliced+intronic`, so splici needs no flag either.*
+  *`--rlen` IS ours to pass: it sets the flank roers adds to intronic
+  sequence and must match the cDNA read length, and the module passes only
+  `--threads`, the sequence inputs and `-o`. It comes from
+  `params.r2_read_length` via `ext.args`. Verified by building a small
+  index with `--rlen 90`.*
+  *`--ram-limit-gib` is also passed. It caps SSHash's external minimizer
+  sort and defaults to 8 GiB — more than the whole `test` profile
+  allowance — so `conf/modules.config` derives it from `task.memory`.*
+- R4.2a There is no mapper flag at quant time either, and none is needed:
+  piscem is the only backend at this version.
+  *AMENDED at T2.2. `params.mapper_backend` was REMOVED from all three
+  params files at the same time: it existed only to carry `--use-piscem`,
+  and a parameter that reaches no command line is a false record of what
+  ran.*
 - R4.2b Index path convention: an index built by `simpleaf index` is
   referenced as `<dir>/index/`. (An index built by `piscem build`
   directly would be `<dir>/index/piscem_idx`, which is not our case.)
@@ -138,7 +164,10 @@ between conditions.
 
 ### R5 — Quantification
 
-- R5.1 `simpleaf quant` with the piscem backend (`--mapper_backend`).
+- R5.1 `simpleaf quant` with the piscem backend.
+  *AMENDED at T2.2: this said "(`--mapper_backend`)". That param no longer
+  exists — piscem is simpleaf 0.30.0's only backend, selected by nothing.
+  See R4.2.*
 - R5.2 The permit-list mode is `--unfiltered-pl`, producing a matrix with
   no cell calling applied. No knee, `--expect-cells`, `--forced-cells` or
   fixed-UMI filtering at this step: cell calling is QCatch's job (R6).
@@ -159,6 +188,16 @@ between conditions.
   R15.3 fixture problem — lowering it admits more barcodes. Decide
   deliberately whether to expose it or leave simpleaf's 10 alone; do not
   leave it unconsidered.*
+
+  *DECIDED at T2.2: left at simpleaf's default of 10, and NOT exposed as a
+  param. Confirmed present as `--min-reads <MIN_READS> [default: 10]` in
+  `simpleaf quant --help` at 0.30.0. Reason for deciding rather than
+  deferring: on real data the default is the documented, comparable
+  setting, and the only known reason to move it is to rescue a fixture too
+  sparse to call cells on. That case is T2.5's, which has to measure the
+  barcode count first; a param added now would invite tuning it on data
+  where it should not be tuned. T2.5 may set it through `ext.args` with the
+  measurement in hand.*
 - R5.3 `--resolution` is a required simpleaf argument. It defaults to
   `cr-like` (`params.umi_resolution`), overridable to `cr-like-em`.
   *Found at T2.1 in the simpleaf 0.30.0 CLI that `conf/containers.config`
@@ -171,7 +210,18 @@ between conditions.
   than implying every cell used the EM resolution. The full set of
   resolution modes at that version is `cr-like`, `cr-like-em`,
   `parsimony`, `parsimony-em`, `parsimony-gene`, `parsimony-gene-em`.*
-- R5.3a `--anndata-out` is passed, producing `af_quant/quants.h5ad`.
+- R5.3a `--anndata-out` is passed, producing `af_quant/alevin/quants.h5ad`.
+  *PATH CORRECTED at T2.2, by running a real quant on a small synthetic
+  fixture: the file lands in `af_quant/alevin/`, NOT directly in
+  `af_quant/`. This requirement, "CLAUDE.md section 4.2" and the design
+  dataflow all said `af_quant/quants.h5ad`. The full `af_quant/alevin/`
+  contents are `quants.h5ad`, `quants_mat.mtx`, `quants_mat_rows.txt` and
+  `quants_mat_cols.txt`. T3.1's reader and T4.2's publishing rule must use
+  the corrected path.*
+  *Also written by simpleaf, one level up: `af_quant/gene_id_to_name.tsv`.
+  That is exactly the mapping R6.4a says QCatch otherwise fetches over the
+  network, and `QCATCH` receives this whole directory. T2.5 should check
+  whether QCatch picks it up on its own before treating R6.4a as open.*
   QCatch accepts mtx input but only the h5ad path carries the doublet and
   mitochondrial metadata; mtx input silently loses it.
   *Settled at T1.5: the nf-core `simpleaf/quant` module HARD-CODES
@@ -186,6 +236,19 @@ between conditions.
   separate named layer. `count_layer` must be reconstructed from the named
   layers. Reading `X` and assuming it equals `count_layer` is a silent
   correctness bug.
+  *CONFIRMED at T2.2 on a real `quants.h5ad` from the pinned container,
+  which is what T5.3 was told to check: `X.sum()` equalled the sum of the
+  three layers exactly. The layer names are `spliced`, `unspliced` and
+  `ambiguous` — note they are the full words, not U/S/A. `var` carries
+  `gene_id` and `gene_symbol`; `obs` carries simpleaf's own per-cell
+  metrics (`corrected_reads`, `mapped_reads`, `deduplicated_reads`,
+  `mapping_rate`, `dedup_rate`, `mean_by_max`, `num_genes_expressed`,
+  `num_genes_over_mean`) plus `barcodes`; `uns` carries `collate_info`,
+  `gpl_info`, `quant_info` and `simpleaf_map_info`.*
+  *The T1.4 anndata warning REPRODUCED here on genuine simpleaf output:
+  `adata.layers.keys()` came back as
+  `['ambiguous', 'spliced', 'unspliced', None]`. The spurious `None` is
+  real and must be filtered before iterating (T3.1).*
 - R5.5 Quantifier output is named `*_raw_matrix.h5ad`.
 - R5.6 `--unfiltered-pl` with no explicit path makes simpleaf resolve and
   cache the chemistry's barcode whitelist under `ALEVIN_FRY_HOME` at run
@@ -214,13 +277,23 @@ between conditions.
   2.2 + 18.4 + 13.4 MB is **34.0 MB**. The earlier figure was an
   arithmetic slip.*
 
-  *OPEN for T2.2, do not assume either way: whether simpleaf accepts a
-  GZIPPED permit list. nf-core/scrnaseq passes `.txt.gz` directly and
-  simpleaf's own registry caches `3M-febrary-2018.txt.gz` and
-  `3M-3pgex-may-2023.txt.gz` gzipped, but no simpleaf or alevin-fry
-  documentation states it, and at least one user log shows a plain `.txt`.
-  Prove it in the pinned container at T2.2. If it fails, decompress in the
-  module; the vendored files stay gzipped either way.*
+  *CLOSED AT T2.2: **a GZIPPED permit list works.** No decompression step
+  is needed and none may be added.*
+  *Proven twice, not inferred. From source, at the version that runs:
+  alevin-fry v0.18.1 `src/cellfilter.rs:1914` loads the unfiltered permit
+  list through `niffler::from_path`, and `Cargo.toml:55` pins
+  `niffler = { version = "3.0.0", features = ["gz"] }`, so the compression
+  is auto-detected. (Two other readers exist —
+  `cellfilter.rs:850` and `utils.rs:1074 read_filter_list` — that use a
+  plain `BufReader`, but they serve the multiplex and `--explicit-pl`
+  paths, not `--unfiltered-pl`.) Then by running: a small synthetic
+  fixture quantified twice in the pinned container, once with
+  `assets/whitelist/10x_V2_barcode_whitelist.txt.gz` and once with the
+  same file decompressed, produced 3 barcode rows each — the exact three
+  synthesised barcodes — and BYTE-IDENTICAL `quants_mat.mtx` files. A
+  binary read of the gzip would have produced a junk whitelist and lost
+  those barcodes, so this distinguishes "accepted" from "silently
+  wrong".*
 - R5.7 simpleaf requires `ALEVIN_FRY_HOME` to be set and
   `simpleaf set-paths` to have been run.
   *Settled at T1.5: the nf-core simpleaf modules do both in their own
@@ -289,6 +362,18 @@ between conditions.
   same nodes are affected: offline hosts and restricted AWS VPCs. T2.5
   decides whether to derive the TSV (`gene_id`, `gene_name`, no header)
   from the GTF the index was built from.*
+
+  *NARROWED at T2.2, and it may already be solved. simpleaf writes
+  `gene_id_to_name.tsv` itself, into BOTH the index directory
+  (`<idx>/index/` and `<idx>/ref/`) and the quant output
+  (`af_quant/gene_id_to_name.tsv`), and `QCATCH` is handed that whole
+  `af_quant` directory. The h5ad's `var` also already carries
+  `gene_symbol`. T2.5 must check whether QCatch finds the file on its own
+  before building anything. If it does not, note the constraint: the
+  option CANNOT be supplied through `ext.args`, because the module has no
+  input for it and an unstaged path is not visible inside the container.
+  It would need the file staged some other way, or the limitation
+  documented.*
 - R6.5 The QCatch HTML report is published per sample.
 - R6.6 QCatch's cell-called matrix is named `*_filtered_matrix.h5ad`.
   *AMENDED at T2.1: the vendored module does not produce that name. It
@@ -643,8 +728,9 @@ answers are not re-litigated during implementation.
 - **Q1 simpleaf flags — RESOLVED.** `simpleaf quant` requires exactly one
   of `--expect-cells | --explicit-pl | --forced-cells | --knee |
   --unfiltered-pl`. This pipeline uses `--unfiltered-pl` (R5.2).
-  `--use-piscem` is set at index time and inherited by quant (R4.2a).
-  `--resolution` is required (R5.3).
+  No mapper flag is passed at all: `--use-piscem` was removed from
+  simpleaf, which now has piscem as its only backend (corrected at T2.2;
+  see R4.2 and R4.2a). `--resolution` is required (R5.3).
 - **Q2 QCatch module — RESOLVED.** An nf-core module named `qcatch`
   exists. Inspect it with `nf-core modules info qcatch`, then
   `nf-core modules install qcatch`. Do not write a local module.

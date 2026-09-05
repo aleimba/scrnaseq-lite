@@ -30,7 +30,7 @@ gtf: null
 r2_read_length: 91             # both PBMC samples are 28 bp R1 / 91 bp R2
 
 # --- Quantification -------------------------------------------------------
-mapper_backend: "piscem"
+# No mapper_backend key: piscem is simpleaf 0.30.0's only backend (T2.2).
 umi_resolution: "cr-like"
 permit_list_mode: "unfiltered-pl"
 count_layer: "S+A"             # whole cells, not nuclei

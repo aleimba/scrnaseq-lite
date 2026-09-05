@@ -32,6 +32,7 @@ CLAUDE.local.md
 .claude/.cc-writes/
 
 # local session-only docs
+docs/todos.md
 docs/environment.md
 docs/container.md
 docs/validation-report.md

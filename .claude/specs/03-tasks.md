@@ -495,8 +495,9 @@ the gitignored `docs/environment.md` and `docs/container.md`.
           `${prefix}_filtered_quants.h5ad` and
           `${prefix}_metrics_summary.csv`. That is `_filtered_quants`, NOT
           the `*_filtered_matrix.h5ad` R6.6 and "CLAUDE.md section 4.2"
-          require, and the quantifier's matrix is `af_quant/quants.h5ad`
-          inside a directory, not `*_raw_matrix.h5ad`. The vendored modules
+          require, and the quantifier's matrix is
+          `af_quant/alevin/quants.h5ad` inside a directory (path corrected
+          at T2.2), not `*_raw_matrix.h5ad`. The vendored modules
           cannot be edited, so the provenance suffix must be applied where
           the file is PUBLISHED (T4.2 `output` block) or by the local
           Scanpy module that consumes it. Decide once, at T4.2, and use the
@@ -507,7 +508,7 @@ the gitignored `docs/environment.md` and `docs/container.md`.
           plots are dropped from the HTML — quietly, not as an error. The
           same class of problem the vendored whitelists solved at T1.4.
           T2.5 must decide whether to feed it the GTF-derived mapping.
-- [ ] **T2.2 Module args.** `conf/modules.config`: `ext.args`,
+- [x] **T2.2 Module args.** `conf/modules.config`: `ext.args`,
       `ext.prefix`, `scratch = true` on `SIMPLEAF_INDEX` (R4.5 — and ONLY
       that; the module already sets `ALEVIN_FRY_HOME` and the open-file
       limit itself, so no `beforeScript` is needed. This supersedes an
@@ -548,6 +549,80 @@ the gitignored `docs/environment.md` and `docs/container.md`.
         --disable_length_filtering` alongside the `--detect_adapter_for_pe`
         the module hard-codes into its paired-end branch. Exit 0, JSON and
         HTML both written. The hard-coded flag is inert in report-only mode.
+      DELIVERED: `conf/modules.config` plus its `includeConfig` line in
+      `nextflow.config`, and `mapper_backend` removed from all three params
+      files. Lint clean at 19 files; three-way params parity holds at 36
+      keys. `.claude/reference/modules.config.snippet` was NOT copied — it
+      is stale in five separate ways, listed in finding 6 below.
+      CARRIED FROM T2.2 — findings, each produced by running:
+      1. **`--use-piscem` DOES NOT EXIST in simpleaf 0.30.0**, the only
+         simpleaf this pipeline runs. `simpleaf index --help` has no mapper
+         flag at all: piscem is the sole backend, under a "Piscem Index
+         Options" heading. R4.2, R4.2a, R5.1, design section 7 and
+         "CLAUDE.md section 4.2" all showed it and are corrected.
+         `params.mapper_backend` is REMOVED from `params/default.yaml`,
+         `params/demo.yaml` and `params/test.yaml` — a param that reaches
+         no command line misrepresents what ran. T5.1: it must not appear
+         in `nextflow_schema.json`.
+      2. `--rlen` is OURS to pass and previously reached nothing. It sets
+         roers' intron flank length and must track the cDNA read length, so
+         `ext.args` passes `--rlen ${params.r2_read_length}`. Verified by
+         building a real index with `--rlen 90`.
+      3. `--ram-limit-gib` (new at this version) caps SSHash's external
+         minimizer sort and DEFAULTS TO 8 GiB — larger than the `test`
+         profile's entire 6 GB `resourceLimits` allowance. `ext.args`
+         derives it from `task.memory` at 75%, floored at 1, so it tracks
+         the profile instead of the host. Verified accepted by running
+         `simpleaf index --rlen 90 --ram-limit-gib 2`.
+      4. **THE GZIPPED WHITELIST WORKS — T2.2 item (ii) is CLOSED**, and no
+         decompression step may be added. Two independent proofs, in R5.6:
+         alevin-fry v0.18.1 reads the unfiltered permit list through
+         `niffler::from_path` with the `gz` feature; and a synthetic
+         fixture quantified with the gzipped vendored whitelist and with
+         the same file decompressed gave the same 3 barcodes and
+         BYTE-IDENTICAL `quants_mat.mtx`. The second proof is the one that
+         matters: it rules out "accepted but silently garbage".
+      5. **`--anndata-out` writes `af_quant/alevin/quants.h5ad`, not
+         `af_quant/quants.h5ad`.** Found by running a real quant. R5.3a,
+         "CLAUDE.md section 4.2" and the design dataflow all had the wrong
+         path. R5.4a's `X` = spliced + unspliced + ambiguous convention was
+         confirmed on that same file, along with the full obs/var/uns
+         layout and a reproduction of the T1.4 spurious `None` layer key —
+         all recorded in R5.4a for T3.1.
+      6. `.claude/reference/modules.config.snippet` MUST NOT be copied. It
+         is stale in five ways, each of which would break the run: a
+         top-level `def` (hard parse error, T1.3 finding 1); `beforeScript`
+         for `ulimit` (the module does it); `params.fastp_args` (dropped at
+         T1.2); `--use-piscem` (gone, finding 1); and repeats of
+         `--anndata-out`, `--unfiltered-pl`, `--resolution`,
+         `--export_summary_table` and `--save_filtered_h5ad`, every one of
+         which the modules hard-code or take as an input, so passing them
+         again is a runtime error. The reference directory is a comparison
+         target, not a source.
+      7. `SIMPLEAF_QUANT` gets NO `ext.args`, deliberately: every argument
+         it needs is either hard-coded in the module or arrives as a module
+         input. `--min-reads` stays at simpleaf's 10, decided rather than
+         inherited (R5.2); T2.5 may lower it with a measured barcode count.
+      8. No `ext.prefix` is set anywhere. Every module already defaults to
+         `${meta.id}`; setting it would duplicate an existing value.
+      9. `params.multiqc_title` is interpolated at config-parse time, so an
+         unguarded `--title '${params.multiqc_title}'` puts the literal
+         string `null` on the report of anyone who forgets `-params-file`
+         — params files are not auto-loaded. The `ext.args` is guarded with
+         a ternary; verified by resolving the config without a params file
+         and seeing `args = ''`.
+      10. `nextflow config` in this version does NOT accept `-params-file`
+          ("Unknown option"). To check how a params file interacts with a
+          config-declared param, use a throwaway root `main.nf` and
+          `nextflow run` — the T1.3 and T1.5 technique. Done here, and
+          removed: `chemistry_map` SURVIVES a `-params-file` that never
+          mentions it, so T1.5's "`-params-file` outranks config params"
+          applies per key, not to the whole params map.
+      11. `nextflow run` warns "There's no process matching config
+          selector: X" for every `withName` that matches nothing, and lint
+          does NOT catch it. Right now every selector warns, because no
+          process exists yet. T4.2 must confirm the warnings are GONE:
+          that message is how a mistyped process name shows up.
 - [ ] **T2.3 R1 assertion.** `modules/local/assert_r1_length/main.nf`.
       Implements R1.5. [Opus, Medium]
 - [ ] **T2.4 Reference subworkflow.**
@@ -569,6 +644,13 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       in place (T2.1 findings 6 and 6a); without it `simpleaf set-paths`
       aborts before any work happens. With it, the image is simpleaf
       0.30.0 / alevin-fry 0.18.1 / piscem 0.23.0.
+      CARRIED FROM T2.2: `conf/modules.config` already supplies `--rlen`,
+      `--ram-limit-gib` and `scratch = true`, so this subworkflow adds no
+      arguments — it only wires channels. Do NOT pass `--use-piscem`; it
+      does not exist at this version (T2.2 finding 1). A small index built
+      here from a genome FASTA plus a GTF produced `<dir>/index/` (matching
+      R4.2b), `<dir>/ref/t2g_3col.tsv` for `SIMPLEAF_QUANT`'s `txp2gene`,
+      and a `gene_id_to_name.tsv` in both — see R6.4a before T2.5.
 - [ ] **T2.5 QCatch wiring.** The nf-core module is named `qcatch`.
       Inspect it with `nf-core modules info qcatch` before wiring, so the
       input/output channel shapes are taken from the module rather than
@@ -614,6 +696,25 @@ the gitignored `docs/environment.md` and `docs/container.md`.
         possible again now that `conf/containers.config` replaces the
         crashing alevin-fry build (T2.1 findings 6 and 6a). Report the
         actual barcode count; do not guess it.
+      CARRIED FROM T2.2:
+      - The chemistry comes from `params.chemistry_map[meta.chemistry]`,
+        which gives `.simpleaf`, `.qcatch` and `.whitelist` together. Look
+        it up ONCE per sample and pass the parts to their modules; never
+        let a caller set two of the three independently.
+      - An unmapped `chemistry` value must fail with a readable message
+        naming the sample and the allowed keys, not with a null-pointer
+        error deep inside a module.
+      - `ext.args` for QCATCH is already written and adds `--n_partitions`
+        only when `params.qcatch_n_partitions` is set. For a custom assay
+        the chemistry VALUE passed to the module must then be null, which
+        makes the module omit `--chemistry` entirely.
+      - R6.4a may already be closed for free: simpleaf writes
+        `af_quant/gene_id_to_name.tsv` into the very directory QCATCH
+        receives, and the h5ad's `var` carries `gene_symbol`. Check whether
+        QCatch picks it up before building anything; if it does not, the
+        option cannot be passed via `ext.args` (no module input, unstaged
+        path invisible in the container) and the limitation gets documented.
+      - The raw matrix is at `af_quant/alevin/quants.h5ad` (T2.2 finding 5).
 
 ## Wave 3 — Scanpy (parallel)
 
@@ -687,6 +788,21 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       `CELL_QC_AND_DOUBLET_FILTERING`, `NORMALISE_CLUSTER_AND_MARKERS`,
       `REPORTING`. Annotate every channel operation with its in/out shape.
       [Opus, High]
+      CARRIED FROM T2.2:
+      - `READ_QC` passes `discard_trimmed_pass = true` to `FASTP`, so fastp
+        writes no read files at all. Verified at T2.2 that this works
+        despite the module putting a bare `true` token on the command line;
+        it is the module's documented report-only mode and it satisfies
+        R3.3 more strongly than merely ignoring the outputs.
+      - The chemistry, the QCatch chemistry and the whitelist FILENAME all
+        come from `params.chemistry_map`; the whitelist path is built
+        against `assets/whitelist/` and staged as `cb_list`. Pass the
+        gzipped file as-is — R5.6 is closed, and decompressing would just
+        add a process.
+      - `SIMPLEAF_QUANT` needs `cell_filter = 'unfiltered-pl'`, the
+        `t2g_3col.tsv` from `SIMPLEAF_INDEX` as `txp2gene`, and
+        `params.umi_resolution` as the `val resolution` input. None of
+        those are `ext.args`.
 - [ ] **T4.2 Entry workflow.** `workflows/scrnaseq_lite.nf` and `main.nf`
       with `publish:` and `output` blocks. Implements R13 and follows
       "Design section 5: Publishing" and "Design section 6: main.nf
@@ -706,7 +822,8 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       CARRIED FROM T2.1: the provenance suffixes R6.6 and "CLAUDE.md
       section 4.2" mandate are NOT what the vendored modules produce —
       QCatch writes `*_filtered_quants.h5ad` and simpleaf writes
-      `af_quant/quants.h5ad` inside a directory. Apply `*_raw_matrix.h5ad`
+      `af_quant/alevin/quants.h5ad` inside a directory — note the `alevin/`
+      level, corrected at T2.2. Apply `*_raw_matrix.h5ad`
       and `*_filtered_matrix.h5ad` in the `output` block's `path`
       directive, one rule for both, rather than editing the modules.
       Also: `MULTIQC` must be ordered AFTER `COLLECT_VERSIONS` and must
@@ -721,6 +838,10 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       Scanpy QC TSV only — and must SAY so, with a visible banner naming
       the cell-calling method, rather than letting the section silently
       vanish as though quantifier QC had passed.
+      CARRIED FROM T2.2: the report TITLE is already set, as
+      `--title '${params.multiqc_title}'` in `conf/modules.config`
+      `ext.args`. Do not also put a title in `assets/multiqc_config.yaml` —
+      that would be the same value in two files.
 - [ ] **T4.4 Analysis report.** `report/analysis_report.qmd` and its
       module. Implements R11.3 and R11.4. [Opus, Medium]
       CARRIED FROM T1.4 — the `.qmd` must NOT call
@@ -743,6 +864,10 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       pipeline with `main.nf`). Implements R1.2-R1.4. [Opus, High]
       CARRIED FROM T1.3: mark the derived param `run_output_dir` as
       `hidden`.
+      CARRIED FROM T2.2: `chemistry_map` is the second derived param and
+      must also be `hidden` — it is a lookup table, not a user knob, and
+      `nf-core pipeline schema build` will offer to add it. `mapper_backend`
+      must NOT appear at all; it was removed from every params file.
       CARRIED FROM R6.7: `cell_calling` is an enum,
       `["qcatch", "threshold"]`, default `qcatch`. Its schema description
       must state that `threshold` performs no ambient modelling and is not
@@ -782,11 +907,12 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       CPU below the build worker's; see T2.1 findings 6 and 6a. If a run
       dies with "Error running alevin-fry ... signal: 4 (SIGILL)", that
       override went missing. Two things this task must still confirm on
-      REAL data, because T2.1 could only confirm the CLI and the registry:
-      that R5.4a's `X` = U + S + A layer convention still holds in
-      simpleaf 0.30.0, and that `--anndata-out` still writes
-      `af_quant/quants.h5ad` at that version. Do not call the pipeline
-      green on stubs alone.
+      REAL data. T2.2 has since settled both on a synthetic fixture:
+      R5.4a's `X` = spliced + unspliced + ambiguous convention HOLDS at
+      simpleaf 0.30.0, and `--anndata-out` writes
+      `af_quant/alevin/quants.h5ad` — one level deeper than every spec
+      previously said. What remains here is confirming the same on real
+      data at scale. Do not call the pipeline green on stubs alone.
 - [ ] **T5.4 Validation.** Run `/validate-pipeline`. Produce
       `docs/validation-report.md` (gitignored). [Opus, Max]
 - [ ] **T5.5 Documentation.** `README.md`, `docs/usage.md`,

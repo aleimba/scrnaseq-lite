@@ -34,8 +34,11 @@ r2_read_length: 91             # cDNA read length; sets the splici intron flank 
 # --- Quantification -------------------------------------------------------
 # fastp arguments are NOT here. They are ext.args in conf/modules.config,
 # which is the single home for per-process arguments.
-mapper_backend: "piscem"       # passed as --use-piscem at INDEX time; quant inherits it,
-                               # so no mapper flag is passed twice
+# There is no mapper_backend key. simpleaf 0.30.0, the version this pipeline
+# runs, has no mapper flag at all: piscem is the only backend. The key existed
+# to carry --use-piscem, which that version removed, so it is gone rather than
+# left in the run record controlling nothing. Verified at T2.2 by reading
+# `simpleaf index --help` in the pinned container.
 umi_resolution: "cr-like"      # simpleaf --resolution (required); cr-like | cr-like-em
 permit_list_mode: "unfiltered-pl"  # QCatch calls cells, so quant stays unfiltered.
                                    # Mutually exclusive with --expect-cells, --knee,

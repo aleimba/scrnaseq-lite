@@ -163,7 +163,7 @@ Every operation is annotated with its in/out shapes.
 | `params/demo.yaml`       | overrides for the bundled PBMC data               |
 | `nextflow.config`        | `outputDir`, publish mode, profiles, plugins, manifest |
 | `conf/base.config`       | resource labels                                   |
-| `conf/modules.config`    | `ext.args`, `ext.prefix`, chemistry mapping, `scratch` |
+| `conf/modules.config`    | `ext.args`, `ext.prefix`, `scratch`, and `params.chemistry_map` |
 | `conf/containers.config` | container overrides for vendored modules; one, and temporary |
 | `conf/test.config`       | remote nf-core test data                          |
 | `conf/demo.config`       | local downsampled PBMC data                       |
@@ -171,6 +171,17 @@ Every operation is annotated with its in/out shapes.
 | `conf/aws.local.config`  | gitignored, environment-specific                  |
 
 A value appears in exactly one file.
+
+**Why the chemistry mapping is a param** (settled at T2.2). Both
+`SIMPLEAF_QUANT` and `QCATCH` take the chemistry as a channel VALUE, not as
+an argument string, so the table has to be readable by workflow Groovy —
+`ext.args` cannot carry it. A `def` at config top level is a hard parse
+error (T1.3 finding 1), which leaves `params` as the only scope workflow
+code can read. `params.chemistry_map` is therefore declared in
+`conf/modules.config` and, like `run_output_dir`, is derived rather than
+user-facing: it must never appear in a params file. Verified by running
+that a `-params-file` which never mentions it leaves it intact, so the
+T1.5 precedence finding applies per key, not to the whole params map.
 
 ## 5. Publishing
 
@@ -231,8 +242,8 @@ No `nextflow.enable.dsl = 2`. No processes defined in `main.nf`.
 
 | Param               | Default          | Why                                                   |
 | ------------------- | ---------------- | ----------------------------------------------------- |
-| `mapper_backend`    | `piscem`         | smaller index, faster than salmon                     |
 | `umi_resolution`    | `cr-like`        | nf-core/scrnaseq default; simple and fast             |
+| `r2_read_length`    | 91               | roers intron flank; passed as `simpleaf index --rlen` |
 | `count_layer`       | `S+A`            | USA convention for single-cell, not nuclei            |
 | cell calling        | QCatch EmptyDrops| depth-independent; a knee discards low-RNA cells      |
 | `mito_mad`          | 5                | outlier-based rather than an arbitrary percentage     |
@@ -245,6 +256,10 @@ No `nextflow.enable.dsl = 2`. No processes defined in `main.nf`.
 | `leiden_resolution` | 1.0              | yields roughly 8-12 clusters on PBMCs                 |
 | `marker_method`     | `wilcoxon`       | rank-based and robust                                 |
 | `seed`              | 42               |                                                       |
+
+`mapper_backend` was REMOVED from this table and from all three params
+files at T2.2: simpleaf 0.30.0 has no mapper flag, piscem is its only
+backend, so the parameter selected nothing. See R4.2.
 
 ## 8. Container design
 
