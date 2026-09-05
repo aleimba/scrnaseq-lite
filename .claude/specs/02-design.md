@@ -53,7 +53,7 @@ SCANPY_MARKER_GENES --> markers.tsv + dotplot              |
 | `FASTP`                    | nf-core                           | report-only; reads not consumed         |
 | `SIMPLEAF_INDEX`           | nf-core                           | conditional; `scratch = true`           |
 | `SIMPLEAF_QUANT`           | nf-core                           | piscem backend, unfiltered matrix       |
-| `QCATCH`                   | nf-core if available, else local  | cell calling + QC HTML                  |
+| `QCATCH`                   | nf-core                           | cell calling + QC HTML                  |
 | `SCANPY_CELL_QC`           | local                             | `bin/scanpy_cell_qc.py`                 |
 | `SCANPY_DETECT_DOUBLETS`   | local                             | `bin/scanpy_detect_doublets.py`         |
 | `SCANPY_NORMALISE_CLUSTER` | local                             | `bin/scanpy_normalise_cluster.py`       |
@@ -62,6 +62,53 @@ SCANPY_MARKER_GENES --> markers.tsv + dotplot              |
 | `COLLECT_VERSIONS`         | local                             | `bin/collect_versions.py`               |
 | `WRITE_RUN_MANIFEST`       | local                             | `bin/write_run_manifest.py`             |
 | `MULTIQC`                  | nf-core                           | custom content                          |
+
+**Installed at T2.1.** The six vendored modules come from
+`nf-core/modules` `master` (nf-core tools 4.1.0); the exact `git_sha` of
+each is in `modules.json`. Tool versions and containers, all read from the
+installed files and confirmed by running each image:
+
+| Module           | Tools                                             | Container (docker)                                                   |
+| ---------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| `fastp`          | fastp 1.3.6                                       | `community.wave.seqera.io/library/fastp:1.3.6--4df8d6c11b471bde`      |
+| `seqkit/stats`   | seqkit 2.13.0                                     | `community.wave.seqera.io/library/seqkit:2.13.0--05c0a96bf9fb2751`    |
+| `multiqc`        | multiqc 1.35                                      | `community.wave.seqera.io/library/multiqc:1.35--c17fb751507e9dfc`     |
+| `simpleaf/index` | simpleaf 0.25.0, alevin-fry 0.15.0, piscem 0.20.0 | `community.wave.seqera.io/library/simpleaf:0.25.0--b9f96d8b71a01864`  |
+| `simpleaf/quant` | simpleaf 0.25.0, alevin-fry 0.15.0, piscem 0.20.0 | as `simpleaf/index`                                                   |
+| `qcatch`         | qcatch 0.2.12 (python 3.14.6)                     | `community.wave.seqera.io/library/pip_qcatch:03b88593a5cca75b`        |
+
+All six are Seqera Wave community images. None is a
+`quay.io/biocontainers` image. Together with the T1.3 decision to use
+per-module containers, this is why the pipeline sets no global
+`process.container` and why the T1.4 image covers local modules only.
+
+**ONE OVERRIDE, in `conf/containers.config`.** `SIMPLEAF_INDEX` and
+`SIMPLEAF_QUANT` run in
+`quay.io/biocontainers/simpleaf:0.30.0--hd612981_0` (simpleaf 0.30.0,
+alevin-fry 0.18.1, piscem 0.23.0) rather than the module's own image. The
+module pins alevin-fry 0.15.0, a bioconda build made from a source tree
+whose `.cargo/config.toml` sets `target-cpu=native`, so it aborts with
+SIGILL on any CPU with fewer features than the build worker's — taking
+`simpleaf set-paths`, and therefore both processes, with it. Upstream
+fixed the config in alevin-fry `0e13d52` (2026-07-10) and 0.18.1 carries
+the fix. The override is deliberately in its own file, not in
+`conf/modules.config`, so that it is easy to see and easy to delete once
+`nf-core modules update` ships a simpleaf module pinning alevin-fry
+0.18.1 or newer. See R4.5 for the evidence and T2.1 finding 6a for the
+verification. Note that `versions.tsv` will report the versions that
+actually ran — 0.30.0 / 0.18.1 / 0.23.0 — not the ones the module pins.
+
+**VERSION-REPORTING CONVENTION — settled at T2.1: the `versions` topic,
+everywhere.** All six modules emit
+`tuple val("${task.process}"), val('<tool>'), eval("<cmd>"), topic: versions`.
+There is no `versions.yml` file anywhere under `modules/nf-core/`, so the
+two conventions are NOT mixed and every LOCAL module uses the topic too.
+`MULTIQC` is the single deliberate exception: it consumes the topic to
+build its report, so it emits a plain `emit: versions` channel instead,
+and wiring it into the topic would deadlock the run. `COLLECT_VERSIONS`
+therefore reads the topic and merges MULTIQC's channel separately, and
+runs before `MULTIQC`. See R12.1a for the two eval quirks it must handle
+(an empty string from a failing eval, and qcatch's `version 0.2.12`).
 
 **Design decision — separate Scanpy processes rather than one monolith.**
 Cost: h5ad serialisation between steps. Benefit: `-resume` granularity,
@@ -117,6 +164,7 @@ Every operation is annotated with its in/out shapes.
 | `nextflow.config`        | `outputDir`, publish mode, profiles, plugins, manifest |
 | `conf/base.config`       | resource labels                                   |
 | `conf/modules.config`    | `ext.args`, `ext.prefix`, chemistry mapping, `scratch` |
+| `conf/containers.config` | container overrides for vendored modules; one, and temporary |
 | `conf/test.config`       | remote nf-core test data                          |
 | `conf/demo.config`       | local downsampled PBMC data                       |
 | `conf/aws.config`        | Batch region, queue, S3 work dir — no account data |

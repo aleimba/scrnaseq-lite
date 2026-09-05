@@ -24,10 +24,14 @@ rather than guessing.
     channel's actual shape.
 11. Confirm every `include` resolves to an existing file and process.
 12. Confirm each channel operation's shape comment matches reality.
-13. Confirm every process reports tool versions, that all local modules
-    use the SAME convention as the installed nf-core modules
-    (`versions.yml` file versus topic channels), and that
-    `COLLECT_VERSIONS` receives all of them.
+13. Confirm every process reports tool versions into the `versions` topic
+    — settled at T2.1: all six installed nf-core modules use the topic and
+    none writes a `versions.yml`, so every local module must match. Confirm
+    `COLLECT_VERSIONS` receives all of them, that it runs BEFORE `MULTIQC`,
+    and that `MULTIQC` is NOT wired into the topic it consumes (doing so
+    hangs the run). Confirm no row of `versions.tsv` has an empty version
+    (a failing `eval` yields an empty string without failing the task) and
+    that qcatch's row reads `0.2.12`, not `version 0.2.12`.
 14. Flag any `combine` that could produce a cartesian explosion.
 15. Confirm `outputDir` does not feed into any task input.
 
@@ -43,9 +47,13 @@ rather than guessing.
 18b. Confirm `--resolution` is passed and matches `params.umi_resolution`.
 18b2. Confirm `--anndata-out` is passed, so QCatch receives h5ad rather
     than mtx.
-18b3. Confirm the v4 chemistry maps to `10xv4-3p`, not `10xv4`.
+18b3. Confirm the v4 chemistry maps to `10xv4-3p`, not `10xv4` — verified
+    at T2.1 against `simpleaf chemistry lookup`, which registers no
+    `10xv4`. Also confirm the QCatch column resolves to `10X_3p_v{2,3,4}`.
 18b4. Confirm `ALEVIN_FRY_HOME` is set and the open-file limit is raised
-    for the simpleaf processes.
+    for the simpleaf processes. Both come from the vendored modules'
+    script blocks (`index` sets `ulimit -n 2048`, `quant` does not need
+    it); the pipeline adds only `scratch = true` on `SIMPLEAF_INDEX`.
 18b5. State whether the barcode whitelist is pre-seeded in the container
     or fetched at run time, and confirm the choice is documented.
 18c. Confirm `--use-piscem` is passed at INDEX time and not duplicated at

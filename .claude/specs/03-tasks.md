@@ -275,7 +275,7 @@ the gitignored `docs/environment.md` and `docs/container.md`.
 
 ## Wave 2 — Upstream (parallel)
 
-- [~] **T2.1 Vendored modules.** `nf-core modules install` for fastp,
+- [x] **T2.1 Vendored modules.** `nf-core modules install` for fastp,
       seqkit/stats, multiqc, simpleaf/index, simpleaf/quant and qcatch.
       Run `simpleaf chemistry lookup` (or the module's equivalent) inside
       the pinned container to confirm the registered chemistry strings
@@ -319,6 +319,194 @@ the gitignored `docs/environment.md` and `docs/container.md`.
           `10XV3`->`10xv3`/`10X_3p_v3`, `10XV4`->`10xv4-3p`/`10X_3p_v4`.
           That is a second independent source, not a substitute for
           running `simpleaf chemistry lookup` in the pinned container.
+      DELIVERED: all six modules installed from `nf-core/modules` `master`
+      with nf-core tools 4.1.0. Versions and containers, read from the
+      installed `main.nf` and `environment.yml` and confirmed by running
+      each container:
+
+      | Module          | tool versions                              | container (docker)                                              |
+      | --------------- | ------------------------------------------ | --------------------------------------------------------------- |
+      | `fastp`         | fastp 1.3.6                                | `community.wave.seqera.io/library/fastp:1.3.6--4df8d6c11b471bde` |
+      | `seqkit/stats`  | seqkit 2.13.0                              | `community.wave.seqera.io/library/seqkit:2.13.0--05c0a96bf9fb2751` |
+      | `multiqc`       | multiqc 1.35                               | `community.wave.seqera.io/library/multiqc:1.35--c17fb751507e9dfc` |
+      | `simpleaf/index`| simpleaf 0.25.0, alevin-fry 0.15.0, piscem 0.20.0 | `community.wave.seqera.io/library/simpleaf:0.25.0--b9f96d8b71a01864` |
+      | `simpleaf/quant`| simpleaf 0.25.0, alevin-fry 0.15.0, piscem 0.20.0 | same as `simpleaf/index`                                    |
+      | `qcatch`        | qcatch 0.2.12 (python 3.14.6)              | `community.wave.seqera.io/library/pip_qcatch:03b88593a5cca75b`  |
+
+      The pinned `git_sha` of each is in `modules.json`. CLOSED (was a
+      CLAUDE.md section 11 open question): every one of the six is a
+      Seqera Wave community image, none is a `quay.io/biocontainers` image.
+      CARRIED FROM T2.1 — findings, every one produced by running:
+      1. **THE VERSION CONVENTIONS ARE NOT MIXED.** All six modules report
+         versions with `eval(...)` into `topic: versions`. Not one
+         `versions.yml` exists in `modules/nf-core/`. Note (d) above is
+         confirmed obsolete and R12.1a is corrected accordingly. Local
+         modules use the topic convention, and T3.5 reads the topic only —
+         with ONE exception, next.
+      2. `MULTIQC` deliberately does NOT publish to the topic. It carries
+         the comment "MultiQC should not push its versions to the
+         `versions` topic. Its input depends on the versions topic to be
+         resolved thus outputting to the topic will let the pipeline hang
+         forever", and emits a plain `emit: versions` channel instead.
+         T3.5 and T4.2 must therefore merge the topic with MULTIQC's own
+         channel, and MULTIQC must run AFTER `COLLECT_VERSIONS` consumes
+         the topic. Wiring MULTIQC into the topic deadlocks the run.
+      3. `simpleaf chemistry lookup -n ".*"` in the pinned container lists
+         exactly 17 registered chemistries. `10xv2`, `10xv3` and
+         `10xv4-3p` are registered; **`10xv4` is NOT**. The mapping table
+         in "CLAUDE.md section 4.3" is confirmed against the tool itself,
+         which is the third independent source after nf-core/scrnaseq
+         `assets/protocols.json` (note (e)).
+      4. SCIENTIFIC CORRECTION, from the same lookup: the registered
+         geometries are `10xv2` -> `1{b[16]u[10]x:}2{r:}` and `10xv3` /
+         `10xv4-3p` -> `1{b[16]u[12]x:}2{r:}`. **The v2 UMI is 10 bp, not
+         12.** R1 lengths are unchanged (v2 26 bp = 16+10, v3/v4 28 bp =
+         16+12), so R1.5 and the T2.3 assertion still hold, but the
+         "16 bp barcode + 12 bp UMI" gloss in "CLAUDE.md section 4.1" is
+         wrong for v2 and is corrected there and in R1.5.
+      5. `qcatch --help` confirms `--chemistry` accepts `10X_3p_v2`,
+         `10X_3p_v3`, `10X_3p_v4` (also `10X_5p_v3`, `10X_3p_LT`,
+         `10X_HT`), and confirms `--n_partitions` and `--skip_umap_tsne`.
+         `params.qcatch_n_partitions` maps to `--n_partitions` (R6.4).
+      6. **BLOCKER on this host, not in the pipeline.** The bioconda
+         `alevin-fry 0.15.0 hd612981_0` build in the pinned simpleaf
+         container dies with SIGILL ("Illegal instruction (core dumped)",
+         exit 132) on `alevin-fry --version`. The host CPU is Zen 2 —
+         `avx`, `avx2` and `bmi2` but no AVX-512 — so the build uses an
+         instruction set this CPU lacks. `simpleaf` and `piscem` from the
+         same image run fine, and `alevin-fry 0.11.2` from
+         `quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0` runs fine, so
+         it is that one build. CONSEQUENCE: `simpleaf set-paths` itself
+         exits 1 ("Error running alevin-fry ... signal: 4 (SIGILL)"), and
+         both simpleaf modules run it in their script blocks under
+         `bash -ue`, so `SIMPLEAF_INDEX` and `SIMPLEAF_QUANT` CANNOT RUN on
+         a CPU without that instruction set. Verified end to end with a
+         throwaway Nextflow process (removed): `[ERROR] SET_PATHS_PROBE
+         exit: 1`. Affects T2.4, T2.5 and above all T5.3, whose real
+         `-profile test,docker` and `demo,docker` runs need a host whose
+         CPU the build supports. `-stub-run` is unaffected. Do NOT edit the
+         vendored modules to work around it. **FIXED at T2.1; see 6a.**
+      6a. **FINDING 6 IS FIXED, in `conf/containers.config`.**
+         Root cause, read from the sources rather than inferred: alevin-fry
+         at tag `v0.15.0` ships a `.cargo/config.toml` containing
+         `rustflags = ["-C", "target-cpu=native"]`, and the bioconda recipe
+         builds it with a plain `cargo install --locked --path .` setting
+         no RUSTFLAGS of its own, so the published binary is tuned to the
+         build worker's CPU. Upstream fixed exactly this in alevin-fry
+         commit `0e13d52` (2026-07-10), "make .cargo/config.toml portable
+         by default (drop target-cpu=native)", whose stated reason is that
+         it "can fault with SIGILL on machines with fewer CPU features".
+         `v0.18.1` and master build the portable baseline
+         `target-cpu=x86-64-v3 -C target-feature=+avx2` instead.
+         nf-core/scrnaseq 4.2.0 never hits this because it pins
+         `quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0`, carrying
+         alevin-fry 0.11.2 — OLDER than the offending config, not newer
+         than the fix. Copying their pin would cost four simpleaf minor
+         versions; we go forward instead.
+         THE FIX: bioconda's simpleaf 0.30.0 recipe requires
+         `alevin-fry >=0.18.1` and `piscem >=0.23.0`, and
+         `quay.io/biocontainers/simpleaf:0.30.0--hd612981_0` resolves to
+         simpleaf 0.30.0 / alevin-fry 0.18.1 / piscem 0.23.0.
+         `conf/containers.config` overrides `container` for
+         `SIMPLEAF_INDEX|SIMPLEAF_QUANT` to that image and `nextflow.config`
+         includes it. The vendored modules stay untouched. It lives in its
+         own file rather than in `conf/modules.config`, which carries
+         `ext.args` and `ext.prefix` only, so the deviation stays visible.
+         VERIFIED by running, on the host that reproduces the SIGILL:
+         `simpleaf set-paths` exits 0 in the new image; a throwaway process
+         NAMED `SIMPLEAF_QUANT` (removed), running the modules' own
+         `export ALEVIN_FRY_HOME=. ; simpleaf set-paths` sequence under the
+         repo's `process.shell`, gave `[SUCCESS] completed=1 failed=0` and
+         `TOPIC: SIMPLEAF_QUANT alevin-fry '0.18.1'`;
+         `nextflow config -profile docker` resolves the override; lint
+         clean at 18 files.
+         NO CLI DRIFT between 0.25.0 and 0.30.0 for anything the modules
+         use: `--fasta`, `--gtf`, `--threads`, `-o` on index and
+         `--chemistry`, `--index`, `--reads1`, `--reads2`, `--t2g-map`,
+         `--resolution`, `--output`, `--threads`, `--anndata-out`,
+         `--unfiltered-pl`, `--map-dir`, `--min-reads` on quant all still
+         exist, and the chemistry registry is identical — same 17 entries,
+         `10xv4-3p`, no `10xv4`.
+         ONE NEW OPTION in 0.30.0, recorded in R5.3: `--small-thresh <N>`
+         resolves cells below N with `cr-like` (winner-take-all) semantics
+         REGARDLESS of `--resolution`. Inert at our `cr-like` default; it
+         would silently apply under `cr-like-em`. Left unset, alevin-fry's
+         own default applies.
+         DELETE `conf/containers.config` and its `includeConfig` line once
+         `nf-core modules update` brings a simpleaf module pinning
+         alevin-fry 0.18.1 or newer. Trap while editing that file: a `*/`
+         inside a block comment — as in a path glob like
+         `simpleaf/*/environment.yml` — closes the comment and is a hard
+         parse error.
+         STILL TRUE, and why the override earns its cost: any bioconda
+         package built from a `target-cpu=native` source tree can fail this
+         way, silently and only on some hosts, and `-stub-run` never
+         exercises it.
+      7. A FAILING `eval:` version command does NOT fail the task. The
+         probe in finding 6 emitted `TOPIC: EVAL_PROBE alevin-fry ''` and
+         the run reported `[SUCCESS] completed=1 failed=0`. So a broken
+         tool silently becomes an EMPTY version string. T3.5 must treat an
+         empty version as an error or an explicit `unknown`, never write a
+         blank cell into `versions.tsv`.
+      8. `qcatch --version` prints `qcatch version 0.2.12`, and the
+         module's `sed -e 's/qcatch //g'` leaves **`version 0.2.12`** —
+         verified with `cat -A`. Every other module's eval is clean
+         (`1.3.6`, `2.13.0`, `0.20.0`, `0.25.0`). T3.5 must strip a
+         leading `version ` token; we cannot fix the vendored module.
+      9. `nf-core modules install` also wrote eight `conf/containers_*.config`
+         files (docker / singularity-https / singularity-oras / conda-lock
+         x amd64 / arm64), each listing only `FASTP` and `MULTIQC`. Nothing
+         includes them and they duplicate the container already declared in
+         each module's `main.nf`, which breaks "a value appears in exactly
+         one file". They were DELETED. They will reappear on the next
+         `nf-core modules install`; delete them again.
+      10. Module input shapes, taken from the installed files, for T2.4,
+          T2.5 and T4.1 — do not assume the older shapes:
+          - `FASTP`: `tuple val(meta), path(reads), path(adapter_fasta)`
+            plus three `val` flags (`discard_trimmed_pass`,
+            `save_trimmed_fail`, `save_merged`).
+          - `SEQKIT_STATS`: `tuple val(meta), path(reads)`; `ext.args`
+            defaults to `--all`.
+          - `MULTIQC`: `tuple val(meta), path(multiqc_files),
+            path(multiqc_config), path(multiqc_logo), path(replace_names),
+            path(sample_names)` — one tuple, meta included.
+          - `SIMPLEAF_INDEX`: four tuples (genome fasta+gtf, transcript
+            fasta, probe csv, feature csv); supplying fasta+gtf yields
+            `--fasta ... --gtf ...`, which is the splici path (R4.2).
+            Outputs `${prefix}/index`, optional `${prefix}/ref` and
+            optional `${prefix}/ref/{t2g,t2g_3col}.tsv`.
+          - `SIMPLEAF_QUANT`: `tuple val(meta), val(chemistry), path(reads)`;
+            `tuple val(meta2), path(index), path(txp2gene)`;
+            `tuple val(meta3), val(cell_filter), val(number_cb), path(cb_list)`;
+            `val resolution`; `tuple val(meta4), path(map_dir)`. Reads must
+            arrive as a flat R1,R2,R1,R2 list — the module does
+            `reads.collate(2).transpose()`. It ADDS a `filtered` key to
+            meta. `cell_filter = 'unfiltered-pl'` with the vendored
+            whitelist as `cb_list` produces `--unfiltered-pl <file>`;
+            note (c) confirmed.
+          - `QCATCH`: `tuple val(meta), val(chemistry), path(quant_dir)`.
+      11. Note (a) confirmed with one correction: `simpleaf/index` does
+          `export ALEVIN_FRY_HOME=.`, `ulimit -n 2048` and
+          `simpleaf set-paths`; `simpleaf/quant` does the first and the
+          third but **no `ulimit`**. Note (b) confirmed verbatim:
+          `--anndata-out` is hard-coded in quant, `--save_filtered_h5ad`
+          and `--export_summary_table` in qcatch.
+      12. `QCATCH` renames its outputs to `${prefix}_qcatch_report.html`,
+          `${prefix}_filtered_quants.h5ad` and
+          `${prefix}_metrics_summary.csv`. That is `_filtered_quants`, NOT
+          the `*_filtered_matrix.h5ad` R6.6 and "CLAUDE.md section 4.2"
+          require, and the quantifier's matrix is `af_quant/quants.h5ad`
+          inside a directory, not `*_raw_matrix.h5ad`. The vendored modules
+          cannot be edited, so the provenance suffix must be applied where
+          the file is PUBLISHED (T4.2 `output` block) or by the local
+          Scanpy module that consumes it. Decide once, at T4.2, and use the
+          same rule for both matrices.
+      13. QCatch has a run-time NETWORK dependency of its own: without
+          `--gene_id2name_file` it "will attempt to retrieve the mapping
+          from a remote registry", and if that fails the mitochondrial
+          plots are dropped from the HTML — quietly, not as an error. The
+          same class of problem the vendored whitelists solved at T1.4.
+          T2.5 must decide whether to feed it the GTF-derived mapping.
 - [ ] **T2.2 Module args.** `conf/modules.config`: `ext.args`,
       `ext.prefix`, `scratch = true` on `SIMPLEAF_INDEX` (R4.5 — and ONLY
       that; the module already sets `ALEVIN_FRY_HOME` and the open-file
@@ -342,6 +530,24 @@ the gitignored `docs/environment.md` and `docs/container.md`.
            infer this from the fact that nf-core/scrnaseq passes `.txt.gz`.
       fastp args must not touch R1; comment the reason inline.
       Implements R3.1-R3.4, R5.1-R5.4, R6.4. [Opus, High]
+      CARRIED FROM T2.1:
+      - The chemistry mapping table is now VERIFIED against
+        `simpleaf chemistry lookup` and `qcatch --help` in the pinned
+        containers (T2.1 findings 3 and 5). Write it here, three columns as
+        planned, and map `params.qcatch_n_partitions` to QCatch's
+        `--n_partitions`. T2.1 deliberately did NOT create
+        `conf/modules.config`: this task owns the file and its
+        `includeConfig` line, and they must land together (T1.3 finding 6).
+      - The v2 UMI is 10 bp, the v3/v4 UMI 12 bp (T2.1 finding 4). Nothing
+        in `ext.args` sets a geometry — simpleaf takes it from the
+        registered chemistry name — but do not restate "16+12" in a comment.
+      - `simpleaf/quant` has no `ulimit` of its own; only `index` does.
+        `scratch = true` still belongs on `SIMPLEAF_INDEX` only (R4.5).
+      - VERIFIED, so it needs no probe here: fastp 1.3.6 accepts
+        `--disable_adapter_trimming --disable_quality_filtering
+        --disable_length_filtering` alongside the `--detect_adapter_for_pe`
+        the module hard-codes into its paired-end branch. Exit 0, JSON and
+        HTML both written. The hard-coded flag is inert in report-only mode.
 - [ ] **T2.3 R1 assertion.** `modules/local/assert_r1_length/main.nf`.
       Implements R1.5. [Opus, Medium]
 - [ ] **T2.4 Reference subworkflow.**
@@ -353,6 +559,16 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       `<dir>/index` (`.gitignore`'d). `ALEVIN_FRY_HOME` and the open-file
       limit need no handling here: the module does both in-script
       (R4.5, R5.7, and T2.1 note (a)). [Opus, High]
+      CARRIED FROM T2.1: `SIMPLEAF_INDEX` takes FOUR input tuples — genome
+      fasta+gtf, transcript fasta, probe csv, feature csv — and picks the
+      splici path only when fasta and gtf are both present and the other
+      three are empty. It emits `${prefix}/index` plus an OPTIONAL
+      `${prefix}/ref` and `${prefix}/ref/{t2g,t2g_3col}.tsv`; the t2g file
+      is what `SIMPLEAF_QUANT` wants as `txp2gene`, so carry it through.
+      A real index build needs the `conf/containers.config` override to be
+      in place (T2.1 findings 6 and 6a); without it `simpleaf set-paths`
+      aborts before any work happens. With it, the image is simpleaf
+      0.30.0 / alevin-fry 0.18.1 / piscem 0.23.0.
 - [ ] **T2.5 QCatch wiring.** The nf-core module is named `qcatch`.
       Inspect it with `nf-core modules info qcatch` before wiring, so the
       input/output channel shapes are taken from the module rather than
@@ -381,6 +597,23 @@ the gitignored `docs/environment.md` and `docs/container.md`.
             lowering `--min-reads` via `ext.args` is the next lever.
             Report the actual barcode count either way.
       (iv)  Only `qcatch` may emit `*_filtered_matrix.h5ad` (R6.6).
+      CARRIED FROM T2.1:
+      - The module's input is `tuple val(meta), val(chemistry),
+        path(quant_dir)` and it emits `report`, `filtered_h5ad` and
+        `metrics_summary`, renamed to `${prefix}_qcatch_report.html`,
+        `${prefix}_filtered_quants.h5ad` and
+        `${prefix}_metrics_summary.csv`. The `_filtered_matrix` suffix
+        R6.6 wants is therefore NOT what the module produces; see T2.1
+        finding 12 and settle the renaming at T4.2.
+      - QCatch reaches the NETWORK for a gene-id-to-name mapping unless
+        `--gene_id2name_file` is given, and silently drops the
+        mitochondrial plots when that fails (T2.1 finding 13). Decide here
+        whether to derive the TSV from the GTF, as the vendored whitelists
+        did for simpleaf.
+      - Measuring (iii) needs a real `SIMPLEAF_QUANT` run, which is
+        possible again now that `conf/containers.config` replaces the
+        crashing alevin-fry build (T2.1 findings 6 and 6a). Report the
+        actual barcode count; do not guess it.
 
 ## Wave 3 — Scanpy (parallel)
 
@@ -421,11 +654,22 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       DE or DGE. [Opus, Medium]
 - [ ] **T3.5 Versions.** `bin/collect_versions.py` and its module ->
       `versions.tsv`. Implements R12.1. [Opus, Medium]
-      CARRIED FROM T1.5: `COLLECT_VERSIONS` must consume BOTH conventions
-      — the `versions.yml` files emitted by the simpleaf modules and the
-      `versions` topic used by `qcatch`. See R12.1a. But see T2.1 note
-      (d): after `nf-core modules install` this may collapse to the topic
-      convention alone. Settle it at T2.1, not here.
+      SETTLED AT T2.1, superseding the T1.5 note that said the two
+      conventions are mixed: ALL SIX installed modules emit `eval(...)`
+      into `topic: versions` and no `versions.yml` exists anywhere in
+      `modules/nf-core/`. `COLLECT_VERSIONS` reads the topic only, and all
+      local modules use the topic convention too. Three consequences, all
+      from T2.1:
+      - `MULTIQC` is the ONE exception and must NOT be wired into the
+        topic: it consumes the topic, and feeding it back in hangs the run
+        forever (the module says so in a comment). Merge its plain
+        `emit: versions` channel separately, and order `COLLECT_VERSIONS`
+        before `MULTIQC`.
+      - A failing eval yields an EMPTY string and the task still
+        SUCCEEDS (finding 7). Treat an empty version as an error or an
+        explicit `unknown`; never write a blank cell.
+      - `qcatch`'s eval yields `version 0.2.12`, not `0.2.12` (finding 8).
+        Strip a leading `version ` token. The vendored module is not edited.
       CARRIED FROM T1.4: do not try to version-report `ps`; the
       `procps-ng` build in the image reports `UNKNOWN`.
 - [ ] **T3.6 Run manifest.** `bin/write_run_manifest.py` and its module ->
@@ -459,6 +703,15 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       publishes cleanly rather than erroring or leaving a header-only CSV
       behind. `-profile test` exercises this path, so it is not a corner
       case.
+      CARRIED FROM T2.1: the provenance suffixes R6.6 and "CLAUDE.md
+      section 4.2" mandate are NOT what the vendored modules produce —
+      QCatch writes `*_filtered_quants.h5ad` and simpleaf writes
+      `af_quant/quants.h5ad` inside a directory. Apply `*_raw_matrix.h5ad`
+      and `*_filtered_matrix.h5ad` in the `output` block's `path`
+      directive, one rule for both, rather than editing the modules.
+      Also: `MULTIQC` must be ordered AFTER `COLLECT_VERSIONS` and must
+      never be wired into the `versions` topic, which deadlocks the run
+      (T2.1 finding 2).
 - [ ] **T4.3 MultiQC.** `assets/multiqc_config.yaml` plus custom-content
       injection of the QCatch summary CSV and the Scanpy QC TSV.
       Implements R11.1. [Opus, High]
@@ -520,6 +773,20 @@ the gitignored `docs/environment.md` and `docs/container.md`.
 - [ ] **T5.3 Green run.** Full `-stub-run`, then `-profile test,docker`,
       then the real `-profile demo,docker` two-sample run. Fix to green.
       [Opus, High]
+      CARRIED FROM T2.1 — the SIGILL blocker is FIXED, but check the fix is
+      still in place before blaming anything else. `conf/containers.config`
+      overrides the two simpleaf processes onto
+      `quay.io/biocontainers/simpleaf:0.30.0--hd612981_0` (alevin-fry
+      0.18.1, the portable build) because the module's pinned alevin-fry
+      0.15.0 is a `target-cpu=native` bioconda build that SIGILLs on any
+      CPU below the build worker's; see T2.1 findings 6 and 6a. If a run
+      dies with "Error running alevin-fry ... signal: 4 (SIGILL)", that
+      override went missing. Two things this task must still confirm on
+      REAL data, because T2.1 could only confirm the CLI and the registry:
+      that R5.4a's `X` = U + S + A layer convention still holds in
+      simpleaf 0.30.0, and that `--anndata-out` still writes
+      `af_quant/quants.h5ad` at that version. Do not call the pipeline
+      green on stubs alone.
 - [ ] **T5.4 Validation.** Run `/validate-pipeline`. Produce
       `docs/validation-report.md` (gitignored). [Opus, Max]
 - [ ] **T5.5 Documentation.** `README.md`, `docs/usage.md`,

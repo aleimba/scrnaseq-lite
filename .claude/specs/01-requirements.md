@@ -43,6 +43,14 @@ between conditions.
 - R1.5 `SEQKIT_STATS` runs on every input FASTQ. The run fails if the
   observed R1 modal length does not match the declared chemistry:
   26 bp for `10XV2`; 28 bp for `10XV3` and `10XV4`.
+  *VERIFIED at T2.1 against `simpleaf chemistry lookup` in the pinned
+  container, which is also a CORRECTION. The registered geometries are
+  `10xv2` -> `1{b[16]u[10]x:}2{r:}` and `10xv3` / `10xv4-3p` ->
+  `1{b[16]u[12]x:}2{r:}`. The **v2 UMI is 10 bp, not 12**: 16 + 10 = 26.
+  The lengths above were right, the "16 bp barcode + 12 bp UMI" gloss
+  repeated in "CLAUDE.md section 4.1" was not, and it is corrected there.
+  Nothing in this pipeline writes a geometry string — simpleaf derives it
+  from the registered chemistry name — so the T2.3 assertion is unchanged.*
 
 ### R2 — Run identity and configuration
 
@@ -153,6 +161,16 @@ between conditions.
   leave it unconsidered.*
 - R5.3 `--resolution` is a required simpleaf argument. It defaults to
   `cr-like` (`params.umi_resolution`), overridable to `cr-like-em`.
+  *Found at T2.1 in the simpleaf 0.30.0 CLI that `conf/containers.config`
+  now selects (see R4.5): the option `--small-thresh <N>` resolves cells
+  below N with `cr-like` winner-take-all semantics REGARDLESS of
+  `--resolution`. It is inert at our `cr-like` default, but it would apply
+  silently to small cells under `cr-like-em`. We leave it unset, so
+  alevin-fry's own default applies. Anyone switching `umi_resolution` to
+  `cr-like-em` should state the effective threshold in the report rather
+  than implying every cell used the EM resolution. The full set of
+  resolution modes at that version is `cr-like`, `cr-like-em`,
+  `parsimony`, `parsimony-em`, `parsimony-gene`, `parsimony-gene-em`.*
 - R5.3a `--anndata-out` is passed, producing `af_quant/quants.h5ad`.
   QCatch accepts mtx input but only the h5ad path carries the doublet and
   mitochondrial metadata; mtx input silently loses it.
@@ -160,7 +178,8 @@ between conditions.
   `--anndata-out` in its script block, so `conf/modules.config` must not
   pass it again. `QCATCH` likewise hard-codes `--save_filtered_h5ad` and
   `--export_summary_table`, leaving only `--skip_umap_tsne` for our
-  `ext.args` (R6.2). Confirm against the installed versions at T2.1.*
+  `ext.args` (R6.2).*
+  *CONFIRMED verbatim at T2.1 by reading the installed modules.*
 - R5.4 The downstream count layer is selected by `--count_layer`
   (default `S+A`, the USA convention for single-cell; `S+A+U` for nuclei).
 - R5.4a simpleaf writes `X` as the SUM of U + S + A and stores each as a
@@ -207,7 +226,41 @@ between conditions.
   *Settled at T1.5: the nf-core simpleaf modules do both in their own
   script blocks, with `ALEVIN_FRY_HOME=.` (task-local, so identical on a
   laptop and on AWS Batch). Nothing is needed in the container. See
-  R4.5. Confirm against the installed version at T2.1.*
+  R4.5.*
+
+  *CONFIRMED at T2.1 against the INSTALLED modules (simpleaf 0.25.0
+  container `community.wave.seqera.io/library/simpleaf:0.25.0--b9f96d8b71a01864`),
+  with one correction: `simpleaf/index` does all three lines;
+  `simpleaf/quant` does `export ALEVIN_FRY_HOME=.` and
+  `simpleaf set-paths` but NO `ulimit`. Only `SIMPLEAF_INDEX` needs
+  `scratch = true`.*
+
+  *ALSO FOUND AT T2.1, and it is not a configuration issue: the bioconda
+  `alevin-fry 0.15.0 hd612981_0` build inside that container aborts with
+  SIGILL on a CPU lacking the instruction set it was compiled for
+  (reproduced on Zen 2: avx, avx2, bmi2, no AVX-512). `simpleaf set-paths`
+  shells out to `alevin-fry --version`, so it exits 1 and takes the whole
+  task with it under `bash -ue`. simpleaf and piscem from the same image
+  are fine, and alevin-fry 0.11.2 from the older
+  `quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0` is fine.*
+
+  *FIXED at T2.1, in `conf/containers.config`. Root cause: alevin-fry
+  `v0.15.0` ships `.cargo/config.toml` with
+  `rustflags = ["-C", "target-cpu=native"]` and the bioconda recipe adds
+  no RUSTFLAGS of its own, so the published binary is tuned to the build
+  worker's CPU. Upstream dropped it in commit `0e13d52` (2026-07-10) for
+  precisely this reason, in favour of the portable
+  `target-cpu=x86-64-v3 -C target-feature=+avx2`; alevin-fry 0.18.1
+  carries the fix. `conf/containers.config` therefore overrides
+  `SIMPLEAF_INDEX|SIMPLEAF_QUANT` onto
+  `quay.io/biocontainers/simpleaf:0.30.0--hd612981_0` (simpleaf 0.30.0,
+  alevin-fry 0.18.1, piscem 0.23.0), whose recipe requires
+  `alevin-fry >=0.18.1`. Verified by running on the host that reproduces
+  the crash: `simpleaf set-paths` exits 0, and a process named
+  `SIMPLEAF_QUANT` completes and reports `alevin-fry 0.18.1` to the
+  versions topic. The vendored modules are NOT edited. The override is a
+  temporary deviation: delete the file once `nf-core modules update`
+  brings a simpleaf module pinning alevin-fry 0.18.1 or newer.*
 
 ### R6 — Cell calling
 
@@ -222,8 +275,30 @@ between conditions.
   two cannot diverge. See "CLAUDE.md section 4.3: Chemistry mapping — one
   source of truth". `--qcatch_n_partitions` is the override for custom
   assays with no mapping.
+  *VERIFIED at T2.1 by running `qcatch --help` in the pinned container
+  (qcatch 0.2.12): `--chemistry` accepts `10X_3p_v2`, `10X_3p_v3`,
+  `10X_3p_v4`, `10X_5p_v3`, `10X_3p_LT` and `10X_HT`, so all three of our
+  mappings are real. `params.qcatch_n_partitions` maps to the tool's
+  `--n_partitions`, documented as "use only when working with a custom or
+  unsupported chemistry"; it overrides the chemistry-based configuration.*
+- R6.4a QCatch fetches its gene-id-to-name mapping from a REMOTE registry
+  unless `--gene_id2name_file` is supplied, and when that lookup fails it
+  omits the mitochondrial plots instead of failing.
+  *Found at T2.1 in `qcatch --help`. Same class of hidden run-time network
+  dependency the vendored whitelists closed for simpleaf at T1.4, and the
+  same nodes are affected: offline hosts and restricted AWS VPCs. T2.5
+  decides whether to derive the TSV (`gene_id`, `gene_name`, no header)
+  from the GTF the index was built from.*
 - R6.5 The QCatch HTML report is published per sample.
 - R6.6 QCatch's cell-called matrix is named `*_filtered_matrix.h5ad`.
+  *AMENDED at T2.1: the vendored module does not produce that name. It
+  renames its outputs to `${prefix}_qcatch_report.html`,
+  `${prefix}_filtered_quants.h5ad` and `${prefix}_metrics_summary.csv`,
+  and `SIMPLEAF_QUANT` emits a whole `af_quant` directory containing
+  `quants.h5ad` rather than an `*_raw_matrix.h5ad` (R5.5). Vendored
+  modules are never edited, so both provenance suffixes are applied where
+  the files are PUBLISHED, in the T4.2 `output` block. The requirement
+  stands; only the place it is satisfied moves.*
 - R6.7 `--cell_calling` selects how cells are separated from empty droplets.
   Enum, default `qcatch`:
   - `qcatch` — R6.1's two-step EmptyDrops-style ambient model. The only
@@ -335,6 +410,30 @@ between conditions.
   `versions.yml` files and the `versions` topic. Our own local modules
   still pick one convention and use it consistently; T2.1 decides which,
   after checking what the installed modules actually do.*
+
+  ***SETTLED AT T2.1, and the T1.5 note above is SUPERSEDED — it described
+  the old module snapshot pinned by nf-core/scrnaseq 4.2.0, not what
+  `nf-core modules install` fetches. The conventions are NOT mixed. All
+  six installed modules — `fastp`, `seqkit/stats`, `multiqc`,
+  `simpleaf/index`, `simpleaf/quant`, `qcatch` — report versions as
+  `tuple val("${task.process}"), val('<tool>'), eval("<cmd>")` into
+  `topic: versions`. No `versions.yml` file exists anywhere under
+  `modules/nf-core/`. `COLLECT_VERSIONS` reads the topic ONLY, and every
+  local module uses the topic convention.***
+  - *ONE EXCEPTION, deliberate and load-bearing: `MULTIQC` emits a plain
+    `emit: versions` channel and stays OUT of the topic, because it
+    CONSUMES the topic and pushing into it "will let the pipeline hang
+    forever" — the module carries that comment itself. So `MULTIQC` runs
+    after `COLLECT_VERSIONS`, and its version reaches `versions.tsv`
+    through its own channel.*
+  - *A failing `eval` does NOT fail the task. Verified at T2.1 with a
+    throwaway process whose eval command aborted: the topic received an
+    EMPTY string and the run reported success. `COLLECT_VERSIONS` must
+    reject or explicitly mark an empty version, never write a blank cell.*
+  - *`qcatch --version` prints `qcatch version 0.2.12`, and the module's
+    `sed -e 's/qcatch //g'` leaves `version 0.2.12`. Strip a leading
+    `version ` token in `COLLECT_VERSIONS`; the module is not edited. The
+    other five evals are clean.*
 - R12.2 Every tool pinned to an exact version in the container.
   *Partly met at T1.4, and the shortfall is deliberate. `docker/Dockerfile`
   pins the 21 packages it NAMES to exact `version=build` triples, all taken
