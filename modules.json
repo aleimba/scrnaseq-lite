@@ -1,0 +1,45 @@
+{
+  "name": "scrnaseq-lite",
+  "homePage": "https://github.com/aleimba/scrnaseq-lite",
+  "repos": {
+    "https://github.com/nf-core/modules.git": {
+      "modules": {
+        "nf-core": {
+          "fastp": {
+            "branch": "master",
+            "git_sha": "826a9b28d6da61097d60e1923bb8a2e51de3c5b4",
+            "installed_by": ["modules"]
+          },
+          "multiqc": {
+            "branch": "master",
+            "git_sha": "98403d15b0e50edae1f3fec5eae5e24982f1fade",
+            "installed_by": ["modules"]
+          },
+          "qcatch": {
+            "branch": "master",
+            "git_sha": "4c594931203e827ba22f06bca97b3f9d633f89db",
+            "installed_by": ["modules"]
+          },
+          "seqkit/stats": {
+            "branch": "master",
+            "git_sha": "d07a945f421a4a91ce4e5a22db63e0e7f8741607",
+            "installed_by": ["modules"]
+          },
+          "simpleaf/index": {
+            "branch": "master",
+            "git_sha": "0863c5e1224f2e5d62a43fe68f8a16a0e8255ad2",
+            "installed_by": ["modules"]
+          },
+          "simpleaf/quant": {
+            "branch": "master",
+            "git_sha": "0863c5e1224f2e5d62a43fe68f8a16a0e8255ad2",
+            "installed_by": ["modules"]
+          }
+        }
+      },
+      "subworkflows": {
+        "nf-core": {}
+      }
+    }
+  }
+}

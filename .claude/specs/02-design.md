@@ -16,6 +16,9 @@ samplesheet.csv
    |                                                       |
    v                                                       |
 SIMPLEAF_QUANT  <-- index (SIMPLEAF_INDEX | --simpleaf_index)
+   | af_quant/alevin/quants.h5ad  (Blosc-compressed)       |
+   v                                                       |
+REPACK_H5AD  (Blosc -> gzip; nothing else can read it)     |
    | *_raw_matrix.h5ad  (no cell calling; rows are the     |
    |  whitelist barcodes seen >= --min-reads times)        |
    |                                                       |
@@ -49,11 +52,12 @@ SCANPY_MARKER_GENES --> markers.tsv + dotplot              |
 | Process                    | Source                            | Notes                                   |
 | -------------------------- | --------------------------------- | --------------------------------------- |
 | `SEQKIT_STATS`             | nf-core                           | `-a -T`                                 |
-| `ASSERT_R1_LENGTH`         | local                             | fails on chemistry mismatch             |
+| `ASSERT_R1_LENGTH`         | local                             | fails on chemistry mismatch; median R1 length vs `chemistry_map.r1_len` |
 | `FASTP`                    | nf-core                           | report-only; reads not consumed         |
 | `SIMPLEAF_INDEX`           | nf-core                           | conditional; `scratch = true`           |
 | `SIMPLEAF_QUANT`           | nf-core                           | piscem backend, unfiltered matrix       |
-| `QCATCH`                   | nf-core if available, else local  | cell calling + QC HTML                  |
+| `REPACK_H5AD`              | local                             | Blosc -> gzip; `bin/repack_h5ad_blosc_to_gzip.py` |
+| `QCATCH`                   | nf-core                           | cell calling + QC HTML                  |
 | `SCANPY_CELL_QC`           | local                             | `bin/scanpy_cell_qc.py`                 |
 | `SCANPY_DETECT_DOUBLETS`   | local                             | `bin/scanpy_detect_doublets.py`         |
 | `SCANPY_NORMALISE_CLUSTER` | local                             | `bin/scanpy_normalise_cluster.py`       |
@@ -62,6 +66,68 @@ SCANPY_MARKER_GENES --> markers.tsv + dotplot              |
 | `COLLECT_VERSIONS`         | local                             | `bin/collect_versions.py`               |
 | `WRITE_RUN_MANIFEST`       | local                             | `bin/write_run_manifest.py`             |
 | `MULTIQC`                  | nf-core                           | custom content                          |
+
+**Installed at T2.1.** The six vendored modules come from
+`nf-core/modules` `master` (nf-core tools 4.1.0); the exact `git_sha` of
+each is in `modules.json`. Tool versions and containers, all read from the
+installed files and confirmed by running each image:
+
+| Module           | Tools                                             | Container (docker)                                                   |
+| ---------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| `fastp`          | fastp 1.3.6                                       | `community.wave.seqera.io/library/fastp:1.3.6--4df8d6c11b471bde`      |
+| `seqkit/stats`   | seqkit 2.13.0                                     | `community.wave.seqera.io/library/seqkit:2.13.0--05c0a96bf9fb2751`    |
+| `multiqc`        | multiqc 1.35                                      | `community.wave.seqera.io/library/multiqc:1.35--c17fb751507e9dfc`     |
+| `simpleaf/index` | simpleaf 0.25.0, alevin-fry 0.15.0, piscem 0.20.0 | `community.wave.seqera.io/library/simpleaf:0.25.0--b9f96d8b71a01864`  |
+| `simpleaf/quant` | simpleaf 0.25.0, alevin-fry 0.15.0, piscem 0.20.0 | as `simpleaf/index`                                                   |
+| `qcatch`         | qcatch 0.2.12 (python 3.14.6)                     | `community.wave.seqera.io/library/pip_qcatch:03b88593a5cca75b`        |
+
+All six are Seqera Wave community images. None is a
+`quay.io/biocontainers` image. Together with the T1.3 decision to use
+per-module containers, this is why the pipeline sets no global
+`process.container` and why the T1.4 image covers local modules only.
+
+**TWO OVERRIDES, in `conf/containers.config`.** First, `SIMPLEAF_INDEX` and
+`SIMPLEAF_QUANT` run in
+`quay.io/biocontainers/simpleaf:0.30.0--hd612981_0` (simpleaf 0.30.0,
+alevin-fry 0.18.1, piscem 0.23.0) rather than the module's own image. The
+module pins alevin-fry 0.15.0, a bioconda build made from a source tree
+whose `.cargo/config.toml` sets `target-cpu=native`, so it aborts with
+SIGILL on any CPU with fewer features than the build worker's — taking
+`simpleaf set-paths`, and therefore both processes, with it. Upstream
+fixed the config in alevin-fry `0e13d52` (2026-07-10) and 0.18.1 carries
+the fix. The override is deliberately in its own file, not in
+`conf/modules.config`, so that it is easy to see and easy to delete once
+`nf-core modules update` ships a simpleaf module pinning alevin-fry
+0.18.1 or newer. See R4.5 for the evidence and T2.1 finding 6a for the
+verification. Note that `versions.tsv` will report the versions that
+actually ran — 0.30.0 / 0.18.1 / 0.23.0 — not the ones the module pins.
+
+Second, `QCATCH` runs in `quay.io/biocontainers/qcatch:0.2.13--pyhdfd78af_0`
+rather than the module's Wave image for 0.2.12. That one is a straight
+version upgrade — current release, measurably faster — not a workaround. It
+does NOT address the Blosc problem: 0.2.13 fails on a Blosc-compressed h5ad
+exactly as 0.2.12 does. `REPACK_H5AD` is what addresses that (R6.4b).
+
+**Local modules call a `bin/` script from a BASH script block, always**
+(settled at T2.3). No script is embedded in a `.nf` file, as a heredoc or
+otherwise: `bin/` is on `PATH` for every task, and a real file can be
+linted, run by hand and diffed. Bash specifically is also required, because
+the `versions` topic is fed by an `eval` output and Nextflow permits `eval`
+only on bash scripts — a `#!/usr/bin/env python` script block fails at
+runtime. A second consequence: `-stub-run` still starts the container,
+because the eval is evaluated there, so a stub run is not image-free.
+
+**VERSION-REPORTING CONVENTION — settled at T2.1: the `versions` topic,
+everywhere.** All six modules emit
+`tuple val("${task.process}"), val('<tool>'), eval("<cmd>"), topic: versions`.
+There is no `versions.yml` file anywhere under `modules/nf-core/`, so the
+two conventions are NOT mixed and every LOCAL module uses the topic too.
+`MULTIQC` is the single deliberate exception: it consumes the topic to
+build its report, so it emits a plain `emit: versions` channel instead,
+and wiring it into the topic would deadlock the run. `COLLECT_VERSIONS`
+therefore reads the topic and merges MULTIQC's channel separately, and
+runs before `MULTIQC`. See R12.1a for the two eval quirks it must handle
+(an empty string from a failing eval, and qcatch's `version 0.2.12`).
 
 **Design decision — separate Scanpy processes rather than one monolith.**
 Cost: h5ad serialisation between steps. Benefit: `-resume` granularity,
@@ -116,13 +182,25 @@ Every operation is annotated with its in/out shapes.
 | `params/demo.yaml`       | overrides for the bundled PBMC data               |
 | `nextflow.config`        | `outputDir`, publish mode, profiles, plugins, manifest |
 | `conf/base.config`       | resource labels                                   |
-| `conf/modules.config`    | `ext.args`, `ext.prefix`, chemistry mapping, `scratch` |
+| `conf/modules.config`    | `ext.args`, `ext.prefix`, `scratch`, and `params.chemistry_map` |
+| `conf/containers.config` | container overrides for vendored modules; one, and temporary |
 | `conf/test.config`       | remote nf-core test data                          |
 | `conf/demo.config`       | local downsampled PBMC data                       |
 | `conf/aws.config`        | Batch region, queue, S3 work dir — no account data |
 | `conf/aws.local.config`  | gitignored, environment-specific                  |
 
 A value appears in exactly one file.
+
+**Why the chemistry mapping is a param** (settled at T2.2). Both
+`SIMPLEAF_QUANT` and `QCATCH` take the chemistry as a channel VALUE, not as
+an argument string, so the table has to be readable by workflow Groovy —
+`ext.args` cannot carry it. A `def` at config top level is a hard parse
+error (T1.3 finding 1), which leaves `params` as the only scope workflow
+code can read. `params.chemistry_map` is therefore declared in
+`conf/modules.config` and, like `run_output_dir`, is derived rather than
+user-facing: it must never appear in a params file. Verified by running
+that a `-params-file` which never mentions it leaves it intact, so the
+T1.5 precedence finding applies per key, not to the whole params map.
 
 ## 5. Publishing
 
@@ -183,8 +261,8 @@ No `nextflow.enable.dsl = 2`. No processes defined in `main.nf`.
 
 | Param               | Default          | Why                                                   |
 | ------------------- | ---------------- | ----------------------------------------------------- |
-| `mapper_backend`    | `piscem`         | smaller index, faster than salmon                     |
 | `umi_resolution`    | `cr-like`        | nf-core/scrnaseq default; simple and fast             |
+| `r2_read_length`    | 91               | roers intron flank; passed as `simpleaf index --rlen` |
 | `count_layer`       | `S+A`            | USA convention for single-cell, not nuclei            |
 | cell calling        | QCatch EmptyDrops| depth-independent; a knee discards low-RNA cells      |
 | `mito_mad`          | 5                | outlier-based rather than an arbitrary percentage     |
@@ -197,6 +275,10 @@ No `nextflow.enable.dsl = 2`. No processes defined in `main.nf`.
 | `leiden_resolution` | 1.0              | yields roughly 8-12 clusters on PBMCs                 |
 | `marker_method`     | `wilcoxon`       | rank-based and robust                                 |
 | `seed`              | 42               |                                                       |
+
+`mapper_backend` was REMOVED from this table and from all three params
+files at T2.2: simpleaf 0.30.0 has no mapper flag, piscem is its only
+backend, so the parameter selected nothing. See R4.2.
 
 ## 8. Container design
 
@@ -233,6 +315,15 @@ running it. Full detail in `docs/container.md`.*
 
 *Measured: 2.66 GB uncompressed, 628 MB gzip-compressed, against the
 R14.3 budget of 2 GB compressed.*
+
+*Amended at T2.6: the image also installs `hdf5plugin` and sets
+`HDF5_PLUGIN_PATH`. Without the Blosc HDF5 filter it supplies, `h5py` here
+cannot read the `quants.h5ad` simpleaf writes for any real sample, which
+`REPACK_H5AD` has to do (R6.4b). `blosc` and `c-blosc2` were already in the
+closure and are NOT the same thing: those are the compression libraries,
+while the filter plugin is what teaches HDF5 to use them. The tag stays
+`scrnaseq-lite:0.1.0` during initial development, so the image must be
+rebuilt after this change rather than pulled by a new tag.*
 
 ## 9. Error handling
 
