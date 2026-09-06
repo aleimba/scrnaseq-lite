@@ -390,6 +390,17 @@ between conditions.
 
 - R6.1 `QCATCH` calls cells from the quantifier output using its two-step
   EmptyDrops-style ambient model.
+  *OPEN, found while settling R6.4a and to be investigated at T2.5: on the
+  REAL pbmc1k data QCatch logs*
+  `Step2- Empty drop failed: non_ambient_result is None. This may indicate
+  low data quality, an incomplete input matrix, or an incorrect chemistry
+  version.`
+  *It still returned 1,176 cells from 25,705 barcodes with `10X_3p_v3`,
+  which is the right order of magnitude for pbmc1k, so the run looks sane
+  — but this requirement promises a TWO-step model and the second step fell
+  back. T2.5 owns cell calling: reproduce it on the demo data and either
+  explain it or fix it. Do not quietly accept a one-step result while the
+  requirement claims two.*
 - R6.2 QCatch runs with `--skip_umap_tsne --export_summary_table
   --save_filtered_h5ad`.
 - R6.3 QCatch's doublet flags are not used.
@@ -406,94 +417,39 @@ between conditions.
   `--n_partitions`, documented as "use only when working with a custom or
   unsupported chemistry"; it overrides the chemistry-based configuration.*
 - R6.4a QCatch fetches its gene-id-to-name mapping from a REMOTE registry
-  unless `--gene_id2name_file` is supplied, and when that lookup fails it
-  omits the mitochondrial plots instead of failing.
-  *Found at T2.1 in `qcatch --help`. Same class of hidden run-time network
-  dependency the vendored whitelists closed for simpleaf at T1.4, and the
-  same nodes are affected: offline hosts and restricted AWS VPCs. T2.5
-  decides whether to derive the TSV (`gene_id`, `gene_name`, no header)
-  from the GTF the index was built from.*
+  unless `--gene_id2name_file` is supplied.
+  ***SETTLED: this pipeline does NOT pass `--gene_id2name_file`, and does
+  not need to.*** *Established by running qcatch 0.2.13 against the real
+  `reference/pbmc1k_quant` matrix:*
+  - *simpleaf's h5ad already carries `var/gene_symbol` — a `string-array`
+    dataset, 38,606 entries, no empty strings, with all 13 MT genes named
+    (`MT-ND3`, `MT-ND4L`, ...). Genes with no symbol fall back to their
+    Ensembl ID, which is normal.*
+  - *QCatch's `add_geneid_2_name_if_absent` (`utils.py:133`) returns
+    immediately when `gene_symbol` is present, so the registry is never
+    consulted. Consistent with the T2.6 result that stock QCatch completes
+    with `--network none`.*
+  - *The run logs "Mitochondrial percentage computed and added to
+    adata.obs", writes `pct_counts_mt` into `obs`, and the HTML report
+    contains mitochondrial content. **The plots render.***
 
-  *CLOSED AT T2.3, from QCatch 0.2.12's own source plus offline runs of the
-  pinned container against real simpleaf output. The behaviour depends
-  entirely on WHICH input QCatch is given, and the help text understates
-  the failure:*
-  - ***h5ad input: no network call at all.**
-    `utils.py:133 add_geneid_2_name_if_absent` returns immediately when
-    `"gene_symbol" in var.columns`, and simpleaf's `--anndata-out` h5ad
-    already carries `gene_symbol` (R5.4a). The registry is never consulted.*
-  - ***mtx input: ALWAYS a network call, and offline it CRASHES.** With no
-    `gene_symbol` column, `input_processing.py:242` calls
-    `get_name_mapping_file_from_registry`, which fetches
-    `https://raw.githubusercontent.com/COMBINE-lab/QCatch-resources/.../registries/id2name.json`.
-    Run with the network disabled, that raises an unhandled
-    `requests.exceptions.ConnectionError` and QCatch exits 1. It does NOT
-    "omit the mitochondrial plots and carry on", which is what
-    `qcatch --help` implies. On an offline node or in a locked-down VPC
-    this kills the run.*
-  - ***The fix, verified offline: pass `--gene_id2name_file`.** simpleaf
-    writes exactly the file QCatch wants, `gene_id_to_name.tsv`
-    (`gene_id`, `gene_name`, no header), into the quant output directory —
-    the same directory `QCATCH` is handed — and also into `<idx>/index/`
-    and `<idx>/ref/`. With `--gene_id2name_file <quant_dir>/gene_id_to_name.tsv`
-    the same offline run gets past the gene-name step with no network
-    access whatsoever.*
-
-  *So the option CAN be supplied through `ext.args` after all, contrary to
-  the T2.2 note this replaces: the file lives INSIDE the staged input
-  directory, so a path relative to it is visible in the container. The
-  cost is that the staged directory's name is then load-bearing; T2.5
-  should stage it under a fixed name rather than relying on the default.*
-- R6.4b **simpleaf 0.30.0 writes h5ad with the Blosc HDF5 filter, which no
-  vendored container can read. RESOLVED at T2.6 by `REPACK_H5AD`.**
-  *The problem, established at T2.3 and confirmed by the user independently
-  on real data: simpleaf's anndata writer uses Blosc (HDF5 filter id 32001)
-  once the matrix is over a small size threshold. No QCatch image ships that
-  filter -- not 0.2.12, not 0.2.13 -- so QCatch fails while PARSING ITS
-  ARGUMENTS, exit 2, before any analysis:*
-
-  ```
-  qcatch: error: argument --input/-i: invalid get_input value: <file>
-  -> Can't synchronously read data (can't open directory (/usr/local/lib/hdf5/plugin).
-  ```
-
-  *Plain `h5py` in the same container fails identically, so this is the
-  image's HDF5 filter set, not QCatch's code. The real
-  `reference/pbmc1k_quant` matrix (25,713 x 38,606) uses
-  `{'32001': 20, 'gzip': 5}`.*
-  ***IT IS SIZE-DEPENDENT, which is how it stayed hidden.** A 3-barcode toy
-  file carries NO filters and reads anywhere; a 200-barcode one does not.
-  A test that passes on a small fixture proves nothing here.*
-  *The QCatch tutorial does not demonstrate a fix: its `quants.h5ad` was
-  written by an older simpleaf in May 2025 and is gzip-compressed, so it
-  never meets the problem.*
-
-  ***THE RESOLUTION, chosen by the user at T2.6 and verified end to end on
-  the real pbmc1k file:** the T1.4 image gains `hdf5plugin` plus
-  `HDF5_PLUGIN_PATH` (R14.3), and a local module, `REPACK_H5AD`, rewrites
-  the quantifier's h5ad with gzip -- the one filter built into every HDF5
-  build -- before anything else touches it. QCatch then keeps its stock
-  container, unmodified.*
-  - *Cost, measured on 25,713 x 38,606: **2.5 s**, 23 MB -> 28.6 MB.*
-  - *Stock `quay.io/biocontainers/qcatch:0.2.13--pyhdfd78af_0` then runs to
-    completion with `--network none` on the module's own output and calls
-    **1,176 cells** from 25,705 barcodes, writing `QCatch_report.html`,
-    `summary_table.csv` and `filtered_quants.h5ad`.*
-  - *The same repacked file serves the `--cell_calling threshold` path, so
-    R7.8 is closed by the same step.*
-
-  *REJECTED, with the reason recorded: building our own QCatch image
-  (biocontainers qcatch + `hdf5plugin`). It would be a SECOND
-  pipeline-authored image, which R14.3 does not allow, and our own image
-  would still need `hdf5plugin` for R7.8 -- two image changes rather than
-  one, for no gain at run time.*
-  *Also established, and worth keeping: **`HDF5_PLUGIN_PATH` alone is
-  sufficient**. Copying the plugins into HDF5's compiled-in default
-  directory is not needed, and neither is `import hdf5plugin` in code we
-  control.*
-  *Unaffected either way: QCatch WRITES its outputs with
-  `compression="gzip"` (`input_processing.py:479`), so
-  `*_filtered_quants.h5ad` is readable everywhere.*
+  *The failure mode in the tool's help text is real but applies only to
+  input WITHOUT `gene_symbol` — an mtx directory, or an h5ad from an older
+  simpleaf. There, QCatch calls the registry and, offline, dies with an
+  unhandled `ConnectionError`, exit 1; it does not degrade gracefully as
+  the help implies.*
+  *If the flag is ever needed, the file exists already: simpleaf writes
+  `gene_id_to_name.tsv` into the index directory and into the quant output
+  (`<idx>/index/`, `<idx>/ref/`, `af_quant/`). Note that `QCATCH` receives
+  the single repacked `.h5ad`, not the `af_quant` directory, so that TSV is
+  not staged beside it — supplying the flag would need extra plumbing.*
+  *GUARDED at the T2.6 addendum, because this is a SILENT failure: if a
+  future simpleaf stopped writing `gene_symbol`, the plots would vanish
+  with nothing in the logs. `bin/repack_h5ad_blosc_to_gzip.py` checks for
+  `var/gene_symbol` and warns loudly, naming the consequence and the fix.
+  It warns rather than fails on purpose: `SCANPY_CELL_QC` recomputes
+  `pct_counts_mt` from `params.mito_gene_prefix` (R7.1), so QCatch's plot
+  is informative, not load-bearing.*
 - R6.5 The QCatch HTML report is published per sample.
 - R6.6 QCatch's cell-called matrix is named `*_filtered_matrix.h5ad`.
   *AMENDED at T2.1: the vendored module does not produce that name. It

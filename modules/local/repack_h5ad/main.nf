@@ -28,6 +28,12 @@ process REPACK_H5AD {
     // real sample. QCatch's container has no Blosc plugin and fails while
     // parsing its arguments, before any analysis; gzip is built into every
     // HDF5 build, so a gzip copy is readable everywhere. See R6.4b.
+    // repack_h5ad_blosc_to_gzip.py is bundled with the pipeline, in bin/.
+    // Called by bare name: Nextflow appends the pipeline's bin directory to
+    // PATH for every task, container or not, so this resolves wherever the
+    // pipeline runs. An absolute `${projectDir}/bin/...` would depend on
+    // that host path existing inside the container, which is not true on a
+    // remote executor.
     """
     repack_h5ad_blosc_to_gzip.py \\
         --input '${quants_h5ad}' \\

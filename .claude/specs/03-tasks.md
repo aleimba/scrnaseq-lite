@@ -753,22 +753,19 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       CARRIED FROM T2.3 — two QCatch findings that change what this task
       builds. Both come from running the pinned containers against real
       simpleaf output; see R6.4a and R6.4b.
-      - **R6.4a is CLOSED, and the repack keeps it closed.** The repacked
-        file is still an h5ad carrying `var['gene_symbol']`, so the
-        no-network branch is the one taken; `--gene_id2name_file` is not
-        needed on this path. Confirmed at T2.6 by running stock qcatch on
-        the repacked real file with `--network none`.
-        The detail, in case the input ever changes: with h5ad input QCatch
-        makes NO network call
-        (it returns early when `var` has `gene_symbol`, which simpleaf's
-        h5ad does). With MTX input it always calls the registry and,
-        offline, dies with an unhandled `ConnectionError`, exit 1 — not
-        the graceful degradation `qcatch --help` describes. Passing
-        `--gene_id2name_file <staged_dir>/gene_id_to_name.tsv` fixes it,
-        and simpleaf writes that file into the very directory QCATCH is
-        handed. This is possible from `ext.args` because the path is
-        INSIDE the staged input, which makes the staged directory's name
-        load-bearing: stage it under a fixed name.
+      - **R6.4a is SETTLED: pass NO `--gene_id2name_file`.** simpleaf's
+        h5ad carries `var/gene_symbol`, QCatch short-circuits its remote
+        lookup on that, and the mitochondrial plots render — verified on
+        the real pbmc1k data, with `pct_counts_mt` written to `obs` and
+        mitochondrial content in the HTML. `REPACK_H5AD` warns if that
+        column ever goes missing. Nothing to do here.
+      - **NEW, and this task owns it: QCatch's empty-drops step 2 FAILED on
+        real pbmc1k data.** It logs `Step2- Empty drop failed:
+        non_ambient_result is None`, yet still returns 1,176 cells from
+        25,705 barcodes with `10X_3p_v3`. R6.1 promises a TWO-step ambient
+        model, so reproduce this on the demo data and either explain it or
+        fix it. Do not accept a one-step result while the requirement
+        claims two. Check `--n_partitions` and the chemistry mapping first.
       - **R6.4b is RESOLVED at T2.6, so this task only WIRES it.**
         simpleaf's h5ad is Blosc-compressed and no QCatch image can read
         it; `REPACK_H5AD` rewrites it as gzip first. So the chain here is
@@ -843,6 +840,28 @@ the gitignored `docs/environment.md` and `docs/container.md`.
       5. Gzip level 4 was chosen as a size/time compromise; the file grows
          about 22% against Blosc. That is the price of being readable
          everywhere.
+      6. **QCatch needs NO `--gene_id2name_file`** — see R6.4a. simpleaf
+         writes `var/gene_symbol` (38,606 entries, no blanks, all 13 MT
+         genes named), QCatch returns early on it, and the mitochondrial
+         plots render. `REPACK_H5AD` now WARNS, without failing, if that
+         column is missing, because its loss would otherwise be silent and
+         only visible as an absent plot.
+      7. **`bin/` scripts are called by BARE NAME, as nf-core does.**
+         Checked against nf-core/scrnaseq 4.2.0, whose `gtf_gene_filter`
+         module calls `filter_gtf_for_genes_in_genome.py` directly with the
+         comment that it is bundled in `bin/`. (Their other local modules
+         use Nextflow's `template` mechanism, which we cannot: a template
+         with a python shebang cannot carry an `eval` version output.)
+         This is a GUARANTEE, not an assumption — Nextflow writes
+         `export PATH="$PATH:<projectDir>/bin"` into `.command.run`, seen
+         directly in a task script.
+         An absolute `${projectDir}/bin/...` was tried and REJECTED: it
+         happens to work locally only because Nextflow mounts a common
+         ancestor of the work directory and `bin/` into the container —
+         with the work dir inside the project it mounted the project, and
+         with `-w /home/joe/tmp/nxf_work` it mounted `/home/joe`. Neither
+         holds on a remote executor with an S3 work directory, where that
+         host path does not exist in the container at all.
 
 ## Wave 3 — Scanpy (parallel)
 

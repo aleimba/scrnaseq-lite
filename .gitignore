@@ -24,7 +24,6 @@ work/
 *.nf.test.snap
 
 # Claude
-CLAUDE.md
 CLAUDE.local.md
 .claude/settings.json
 .claude/settings.local.json

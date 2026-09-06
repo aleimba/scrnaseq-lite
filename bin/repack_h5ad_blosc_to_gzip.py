@@ -149,8 +149,44 @@ def verify(source_path, dest_path):
                 print(f"  verified {name}: sum {src_total:g}", file=sys.stderr)
 
 
+def warn_if_no_gene_symbol(path):
+    """Warn, loudly, if the matrix carries no gene symbols.
+
+    QCatch skips its remote gene-name lookup entirely when `var/gene_symbol`
+    is present, which is why this pipeline passes no `--gene_id2name_file`
+    and still gets mitochondrial plots. simpleaf has written that column in
+    every version used here. If it ever stops, QCatch would quietly reach
+    for the network instead and, failing that, drop the plots with nothing
+    in our logs to explain it -- so notice it here, where we already have
+    the file open.
+
+    A warning rather than an error on purpose: SCANPY_CELL_QC recomputes
+    `pct_counts_mt` itself from `params.mito_gene_prefix` (R7.1), so
+    QCatch's plot is informative rather than load-bearing, and stopping a
+    run over it would be disproportionate.
+    """
+    with h5py.File(path, "r") as handle:
+        if isinstance(handle.get("var/gene_symbol"), h5py.Dataset):
+            return
+
+    print(
+        "REPACK_H5AD WARNING: this matrix has no 'var/gene_symbol' column.\n"
+        "  QCatch will try to fetch a gene-id-to-name mapping from a remote\n"
+        "  registry, and if that fails -- offline node, restricted VPC -- its\n"
+        "  mitochondrial plots will be missing from the report.\n"
+        "  Fix: pass QCatch --gene_id2name_file. simpleaf writes exactly that\n"
+        "  file as 'gene_id_to_name.tsv', in both the index and the quant\n"
+        "  output directory.\n"
+        "  Continuing: the pipeline's own mitochondrial percentage is\n"
+        "  computed in SCANPY_CELL_QC from --mito_gene_prefix, not here.",
+        file=sys.stderr,
+    )
+
+
 def main(argv=None):
     args = parse_args(argv)
+
+    warn_if_no_gene_symbol(args.input)
 
     with h5py.File(args.input, "r") as source, h5py.File(args.output, "w") as dest:
         dest.attrs.update(source.attrs)
