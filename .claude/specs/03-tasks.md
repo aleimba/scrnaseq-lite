@@ -1117,9 +1117,20 @@ eval is evaluated there.
       CARRIED FROM T1.4: word the reproducibility claim as "PCA and UMAP
       coordinates may differ across BLAS thread counts" (R12.4). Do not
       promise cluster stability across thread counts.
+      DRAFTS ALREADY EXIST, written early on request: `README.md` and
+      `docs/usage.md`. REVIEW both against the pipeline as finally
+      implemented and rebuild what has drifted - every command, parameter
+      table and output claim in them was written before `main.nf` existed.
+      `docs/output.md` is still to be written. All three must stay
+      STANDALONE: no requirement or task IDs, and no prose citing a
+      requirement as its authority.
 - [ ] **T5.6 Changelog.** Finalise `CHANGELOG.md` 0.1.0 with today's date.
       A single "Initial implementation" entry only. [Opus, Low]
 - [ ] **T5.7 CITATIONS.md.** Include a `CITATIONS.md` with the relevant
       citations for this pipeline, from
       `https://raw.githubusercontent.com/nf-core/scrnaseq/refs/tags/4.2.0/CITATIONS.md`.
       Keep only the tools this pipeline actually runs. [Opus, Low]
+      DRAFT ALREADY EXISTS, written early alongside the README. Every DOI
+      in it was resolved against Crossref at the time of writing. REVIEW
+      it against the final tool list: add anything newly introduced, drop
+      anything no longer run.
